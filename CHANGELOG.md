@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.9
+
+- Add a server-side Claude request patcher that injects stable `metadata.user_id` plus prompt-cache `cache_control` into outgoing Claude requests.
+- Patch both native Claude `/messages` requests and OpenAI-compatible Claude `/chat/completions` requests while leaving non-Claude models untouched.
+
 ## 0.1.8
 
 - Add manual History Depth and 1h TTL controls so config can be saved without editing YAML by hand.

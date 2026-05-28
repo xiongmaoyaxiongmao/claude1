@@ -1,10 +1,24 @@
 'use strict';
 
 const fs = require('node:fs');
+const http = require('node:http');
+const https = require('node:https');
 const path = require('node:path');
 
 const MAX_ITEMS = 100;
 const snapshots = [];
+const patcherState = {
+  installed: false,
+  patchedRequests: 0,
+  skippedRequests: 0,
+  lastPatchedAt: null,
+  lastTarget: null,
+  lastUserId: null,
+};
+const originalRequest = {
+  http: http.request,
+  https: https.request,
+};
 
 async function init(router) {
   router.get('/diagnose', (_req, res) => {
@@ -62,12 +76,22 @@ async function init(router) {
     }
   });
 
+  router.get('/patcher', (_req, res) => {
+    res.json({
+      ok: true,
+      ...patcherState,
+      userId: getMetadataUserId(),
+    });
+  });
+
+  installRequestPatcher();
   console.log('[Claude Cache Lens] server plugin loaded');
   return Promise.resolve();
 }
 
 async function exit() {
   snapshots.length = 0;
+  restoreRequestPatcher();
   return Promise.resolve();
 }
 
@@ -194,12 +218,313 @@ function timestamp() {
   return new Date().toISOString().replace(/[:.]/g, '-');
 }
 
+function installRequestPatcher() {
+  if (patcherState.installed) {
+    return;
+  }
+  http.request = makePatchedRequest('http:', originalRequest.http);
+  https.request = makePatchedRequest('https:', originalRequest.https);
+  patcherState.installed = true;
+}
+
+function restoreRequestPatcher() {
+  if (!patcherState.installed) {
+    return;
+  }
+  http.request = originalRequest.http;
+  https.request = originalRequest.https;
+  patcherState.installed = false;
+}
+
+function makePatchedRequest(protocol, original) {
+  return function patchedRequest(...args) {
+    const requestInfo = getRequestInfo(protocol, args);
+    const req = original.apply(this, args);
+    if (!requestInfo || !shouldCaptureTarget(requestInfo)) {
+      return req;
+    }
+
+    const chunks = [];
+    const originalWrite = req.write.bind(req);
+    const originalEnd = req.end.bind(req);
+
+    req.write = function patchedWrite(chunk, encoding, callback) {
+      if (typeof encoding === 'function') {
+        callback = encoding;
+        encoding = undefined;
+      }
+      if (chunk) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding));
+      }
+      if (typeof callback === 'function') {
+        callback();
+      }
+      return true;
+    };
+
+    req.end = function patchedEnd(chunk, encoding, callback) {
+      if (typeof chunk === 'function') {
+        callback = chunk;
+        chunk = undefined;
+        encoding = undefined;
+      } else if (typeof encoding === 'function') {
+        callback = encoding;
+        encoding = undefined;
+      }
+      if (chunk) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding));
+      }
+
+      const originalBody = Buffer.concat(chunks);
+      const patchResult = patchClaudeCacheRequestBuffer(originalBody, requestInfo);
+      if (patchResult.changed) {
+        req.setHeader('content-length', Buffer.byteLength(patchResult.body));
+        patcherState.patchedRequests += 1;
+        patcherState.lastPatchedAt = new Date().toISOString();
+        patcherState.lastTarget = requestInfo.href;
+        patcherState.lastUserId = patchResult.userId;
+      } else {
+        patcherState.skippedRequests += 1;
+      }
+
+      return originalEnd(patchResult.changed ? patchResult.body : originalBody, encoding, callback);
+    };
+
+    return req;
+  };
+}
+
+function patchClaudeCacheRequestBuffer(buffer, requestInfo) {
+  if (!buffer?.length) {
+    return { changed: false, body: buffer };
+  }
+  const text = buffer.toString('utf8');
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return { changed: false, body: buffer };
+  }
+
+  const result = patchClaudeCacheRequestBody(body, {
+    forceClaude: requestInfo.pathname.endsWith('/messages'),
+    userId: getMetadataUserId(),
+    settings: readClaudeConfigFromDisk(),
+  });
+
+  if (!result.changed) {
+    return { changed: false, body: buffer };
+  }
+
+  return {
+    changed: true,
+    body: JSON.stringify(body),
+    userId: result.userId,
+  };
+}
+
+function patchClaudeCacheRequestBody(body, options = {}) {
+  if (!body || typeof body !== 'object') {
+    return { changed: false };
+  }
+  const model = String(body.model || '').toLowerCase();
+  const isClaude = options.forceClaude || model.includes('claude');
+  if (!isClaude) {
+    return { changed: false };
+  }
+
+  const settings = options.settings || {};
+  const ttl = settings.extendedTTL ? '1h' : '5m';
+  const cacheControl = { type: 'ephemeral', ttl };
+  const userId = sanitizeMetadataUserId(options.userId || getMetadataUserId());
+  let changed = false;
+
+  if (!body.metadata || typeof body.metadata !== 'object' || Array.isArray(body.metadata)) {
+    body.metadata = {};
+    changed = true;
+  }
+  if (body.metadata.user_id !== userId) {
+    body.metadata.user_id = userId;
+    changed = true;
+  }
+
+  if (!body.cache_control) {
+    body.cache_control = cacheControl;
+    changed = true;
+  }
+
+  if (ensureSystemCacheControl(body, cacheControl)) {
+    changed = true;
+  }
+
+  const depth = Number.isInteger(settings.cachingAtDepth) ? settings.cachingAtDepth : -1;
+  if (Array.isArray(body.messages) && depth >= 0 && ensureMessageCacheControlAtDepth(body.messages, depth, cacheControl)) {
+    changed = true;
+  }
+
+  return { changed, userId };
+}
+
+function ensureSystemCacheControl(body, cacheControl) {
+  if (Array.isArray(body.system) && body.system.length > 0) {
+    const last = body.system[body.system.length - 1];
+    if (last && typeof last === 'object' && !last.cache_control) {
+      last.cache_control = { ...cacheControl };
+      return true;
+    }
+    return false;
+  }
+
+  if (typeof body.system === 'string' && body.system.trim()) {
+    body.system = [{ type: 'text', text: body.system, cache_control: { ...cacheControl } }];
+    return true;
+  }
+
+  if (!Array.isArray(body.messages)) {
+    return false;
+  }
+
+  const systemMessage = body.messages.find((message) => message?.role === 'system');
+  if (!systemMessage) {
+    return false;
+  }
+  return ensureMessageContentCacheControl(systemMessage, cacheControl);
+}
+
+function ensureMessageCacheControlAtDepth(messages, cachingAtDepth, cacheControl) {
+  let changed = false;
+  let passedThePrefill = false;
+  let depth = 0;
+  let previousRoleName = '';
+
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (!message || typeof message !== 'object') {
+      continue;
+    }
+    if (!passedThePrefill && message.role === 'assistant') {
+      continue;
+    }
+
+    passedThePrefill = true;
+
+    if (message.role === 'system') {
+      continue;
+    }
+
+    if (message.role !== previousRoleName) {
+      if (depth === cachingAtDepth || depth === cachingAtDepth + 2) {
+        if (ensureMessageContentCacheControl(message, cacheControl)) {
+          changed = true;
+        }
+      }
+
+      if (depth === cachingAtDepth + 2) {
+        break;
+      }
+
+      depth += 1;
+      previousRoleName = message.role;
+    }
+  }
+
+  return changed;
+}
+
+function ensureMessageContentCacheControl(message, cacheControl) {
+  if (message.cache_control || message.content?.cache_control) {
+    return false;
+  }
+  if (typeof message.content === 'string' && message.content.trim()) {
+    message.content = [{ type: 'text', text: message.content, cache_control: { ...cacheControl } }];
+    return true;
+  }
+  if (Array.isArray(message.content)) {
+    for (let i = message.content.length - 1; i >= 0; i -= 1) {
+      const part = message.content[i];
+      if (part && typeof part === 'object' && !part.cache_control && isCacheableContentPart(part)) {
+        part.cache_control = { ...cacheControl };
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function isCacheableContentPart(part) {
+  return !part.type || ['text', 'image', 'document', 'tool_use', 'tool_result'].includes(part.type);
+}
+
+function readClaudeConfigFromDisk() {
+  const configPath = findConfigPath();
+  if (!fs.existsSync(configPath)) {
+    return {};
+  }
+  return readClaudeConfig(fs.readFileSync(configPath, 'utf8')) || {};
+}
+
+function getMetadataUserId() {
+  return sanitizeMetadataUserId(process.env.CLAUDE_CACHE_LENS_USER_ID || 'sillytavern-default-user');
+}
+
+function sanitizeMetadataUserId(value) {
+  return String(value || 'sillytavern-default-user')
+    .trim()
+    .replace(/[^A-Za-z0-9_.:-]/g, '-')
+    .slice(0, 128) || 'sillytavern-default-user';
+}
+
+function shouldCaptureTarget(info) {
+  if (info.method !== 'POST') {
+    return false;
+  }
+  return info.pathname.endsWith('/messages') || info.pathname.endsWith('/chat/completions');
+}
+
+function getRequestInfo(protocol, args) {
+  try {
+    const url = normalizeRequestUrl(protocol, args[0], args[1]);
+    const options = getRequestOptions(args[0], args[1]);
+    const method = String(options.method || 'GET').toUpperCase();
+    return {
+      href: url.href,
+      method,
+      hostname: url.hostname,
+      pathname: url.pathname,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeRequestUrl(protocol, input, options = {}) {
+  if (input instanceof URL) {
+    return new URL(input.href);
+  }
+  if (typeof input === 'string') {
+    return new URL(input);
+  }
+  const requestOptions = input && typeof input === 'object' ? { ...input, ...(options || {}) } : (options || {});
+  const hostname = requestOptions.hostname || requestOptions.host || 'localhost';
+  const port = requestOptions.port ? `:${requestOptions.port}` : '';
+  const pathName = requestOptions.path || requestOptions.pathname || '/';
+  return new URL(`${requestOptions.protocol || protocol}//${hostname}${port}${pathName}`);
+}
+
+function getRequestOptions(input, options) {
+  if (input instanceof URL || typeof input === 'string') {
+    return options || {};
+  }
+  return input || {};
+}
+
 module.exports = {
   init,
   exit,
   _private: {
     buildClaudeBlock,
     normalizeClaudeSettings,
+    patchClaudeCacheRequestBody,
     readClaudeConfig,
     updateConfigYaml,
   },

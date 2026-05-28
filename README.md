@@ -58,6 +58,13 @@ Restart SillyTavern. The plugin folder must contain `index.js`, `index.cjs`, and
 
 The config endpoint only updates the top-level `claude:` block in `config.yaml` and creates a backup before writing. Restart SillyTavern after applying the config.
 
+The server plugin also patches outgoing Claude requests in-process:
+
+- Adds top-level `metadata.user_id` with a stable default value.
+- Adds top-level `cache_control` for 5-minute or 1-hour cache TTL.
+- Adds compatible cache breakpoints to native Claude and OpenAI-compatible Claude request bodies.
+- Leaves non-Claude models untouched.
+
 Check whether it loaded:
 
 ```text
