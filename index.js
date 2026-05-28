@@ -173,6 +173,9 @@ function mountPanel() {
           <button id="ccl_sync_server_plugin" class="menu_button" type="button" title="Sync server plugin from extension">
             <i class="fa-solid fa-plug-circle-bolt"></i>
           </button>
+          <button id="ccl_allow_baseline_write" class="menu_button" type="button" title="Allow next Claude request to write one cache baseline">
+            <i class="fa-solid fa-key"></i>
+          </button>
         </div>
         <div class="ccl-config-controls">
           <label class="ccl-field">
@@ -243,6 +246,7 @@ function bindEvents(context) {
   panel.querySelector('#ccl_copy_config')?.addEventListener('click', copyRecommendedConfig);
   panel.querySelector('#ccl_apply_config')?.addEventListener('click', applyRecommendedConfig);
   panel.querySelector('#ccl_sync_server_plugin')?.addEventListener('click', syncServerPlugin);
+  panel.querySelector('#ccl_allow_baseline_write')?.addEventListener('click', allowBaselineWriteOnce);
   panel.querySelector('#ccl_depth_select')?.addEventListener('change', (event) => {
     const settings = getSettings();
     settings.cachingAtDepthOverride = Number(event.target.value);
@@ -492,6 +496,32 @@ async function setGuardEnabled(enabled) {
   }
 }
 
+async function allowBaselineWriteOnce() {
+  const hintNode = document.getElementById('ccl_config_hint');
+  try {
+    const response = await fetch('/api/plugins/claude-cache-lens/guard', {
+      method: 'POST',
+      headers: getJsonHeaders(),
+      body: JSON.stringify({ allowBaselineWriteOnce: true }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `Server plugin returned ${response.status}`);
+    }
+    if (latestState.serverStatus?.payload) {
+      latestState.serverStatus.payload.guard = payload.guard;
+    }
+    if (hintNode) {
+      hintNode.textContent = '已允许下一条 Claude 请求写入一次缓存基准。';
+    }
+    renderServerStatus();
+  } catch (error) {
+    if (hintNode) {
+      hintNode.textContent = `无法允许基准写入：${error.message || error}`;
+    }
+  }
+}
+
 async function loadServerStatus() {
   latestState.serverStatus = { state: 'checking' };
   renderServerStatus();
@@ -572,10 +602,10 @@ function renderServerStatus() {
       ? `；自动断点=${payload.lastAutoBreakpoint.reason}${payload.lastAutoBreakpoint.tokens ? `(${payload.lastAutoBreakpoint.tokens})` : ''}`
       : '';
     const guard = payload.guard
-      ? `；Guard=${payload.guard.enabled ? 'On' : 'Off'}${payload.guard.blockedRequests ? `，已拦截 ${payload.guard.blockedRequests} 次` : ''}`
+      ? `；Guard=${payload.guard.enabled ? 'On' : 'Off'}${payload.guard.requirePreviousPrefix ? '，Strict' : ''}${payload.guard.allowBaselineWriteOnce ? '，已允许一次基准写入' : ''}${payload.guard.blockedRequests ? `，已拦截 ${payload.guard.blockedRequests} 次${payload.guard.lastBlockedReason ? `(${payload.guard.lastBlockedReason})` : ''}` : ''}`
       : '';
     const lastClaude = payload.lastClaude
-      ? `；Claude前缀${payload.lastClaude.matchedPreviousPrefix ? '稳定' : '变化'}${payload.lastClaude.previousAt ? '' : '(首条)'}`
+      ? `；Claude前缀${payload.lastClaude.matchedPreviousPrefix ? '稳定' : payload.lastClaude.missingPreviousPrefix ? '无基准' : '变化'}${payload.lastClaude.previousAt ? '' : '(首条)'}`
       : '';
     const skipped = payload.skippedRequests || 0;
     const skipHint = skipped

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.20
+
+- Guard Strict mode now blocks the first Claude cache write unless the user explicitly allows one baseline write.
+- Add a UI key button to allow exactly one baseline cache write, making paid cache warm-up intentional.
+
 ## 0.1.19
 
 - Guard now blocks Claude requests when the cache prefix changed from the previous Claude request.

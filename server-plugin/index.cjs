@@ -6,7 +6,7 @@ const https = require('node:https');
 const path = require('node:path');
 
 const MAX_ITEMS = 100;
-const PLUGIN_VERSION = '0.1.19';
+const PLUGIN_VERSION = '0.1.20';
 const SERVER_PLUGIN_PACKAGE_NAME = 'claude-cache-lens-server-plugin';
 const STATE_DIR = path.resolve(__dirname, '.claude-cache-lens');
 const PREFIX_HISTORY_PATH = path.join(STATE_DIR, 'prefix-history.json');
@@ -22,6 +22,8 @@ const snapshots = [];
 const claudePrefixHistory = new Map();
 const guardState = {
   enabled: true,
+  requirePreviousPrefix: true,
+  allowBaselineWriteOnce: false,
   blockedRequests: 0,
   lastBlockedAt: null,
   lastBlockedTarget: null,
@@ -134,7 +136,15 @@ async function init(router) {
   });
 
   router.post('/guard', (req, res) => {
-    guardState.enabled = Boolean(req.body?.enabled);
+    if (Object.hasOwn(req.body || {}, 'enabled')) {
+      guardState.enabled = Boolean(req.body?.enabled);
+    }
+    if (Object.hasOwn(req.body || {}, 'requirePreviousPrefix')) {
+      guardState.requirePreviousPrefix = Boolean(req.body?.requirePreviousPrefix);
+    }
+    if (Object.hasOwn(req.body || {}, 'allowBaselineWriteOnce')) {
+      guardState.allowBaselineWriteOnce = Boolean(req.body?.allowBaselineWriteOnce);
+    }
     res.json({
       ok: true,
       guard: guardState,
@@ -371,6 +381,10 @@ function makePatchedRequest(protocol, original) {
         process.nextTick(() => req.destroy(error));
         return req;
       }
+      if (patchResult.missingPreviousPrefix && guardState.allowBaselineWriteOnce) {
+        patchResult.usedBaselineWriteAllowance = true;
+        guardState.allowBaselineWriteOnce = false;
+      }
       if (patchResult.minimumCacheTokens) {
         recordClaudeAttempt(patchResult, requestInfo, now, 'sent');
       }
@@ -420,6 +434,13 @@ function getGuardBlockReason(patchResult) {
   if (patchResult.prefixMismatch === true) {
     return 'prefix_mismatch';
   }
+  if (
+    guardState.requirePreviousPrefix
+    && patchResult.missingPreviousPrefix === true
+    && !guardState.allowBaselineWriteOnce
+  ) {
+    return 'missing_baseline';
+  }
   return null;
 }
 
@@ -430,6 +451,9 @@ function buildGuardErrorMessage(patchResult) {
   }
   if (reason === 'prefix_expired') {
     return 'Claude Cache Lens blocked request: previous cache prefix is older than the selected TTL.';
+  }
+  if (reason === 'missing_baseline') {
+    return 'Claude Cache Lens blocked request: no previous cache baseline. Allow one baseline write first.';
   }
   return `Claude Cache Lens blocked request: cache prefix ${patchResult.estimatedPromptTokens || 0}/${patchResult.minimumCacheTokens} tokens.`;
 }
@@ -474,6 +498,11 @@ function getClaudePrefixComparison(patchResult, requestInfo, now = new Date().to
     && patchResult.estimatedPromptTokens >= patchResult.minimumCacheTokens
     && !prefixExpired
   );
+  const missingPreviousPrefix = Boolean(
+    !previous
+    && prefixHash
+    && patchResult.estimatedPromptTokens >= patchResult.minimumCacheTokens
+  );
 
   return {
     target,
@@ -484,6 +513,7 @@ function getClaudePrefixComparison(patchResult, requestInfo, now = new Date().to
     matchedPreviousPrefix,
     prefixMismatch,
     prefixExpired,
+    missingPreviousPrefix,
   };
 }
 
@@ -511,6 +541,8 @@ function recordClaudeAttempt(patchResult, requestInfo, now, outcome) {
     previousAgeMs: comparison.previousAgeMs ?? null,
     prefixMismatch: comparison.prefixMismatch,
     prefixExpired: comparison.prefixExpired,
+    missingPreviousPrefix: comparison.missingPreviousPrefix,
+    usedBaselineWriteAllowance: patchResult.usedBaselineWriteAllowance || false,
     guardReason: patchResult.guardReason || null,
     autoBreakpoint: patchResult.autoBreakpoint || null,
   };

@@ -15,4 +15,4 @@ coverage/
 dist/
 *.tgz
 
-.claude-cache-lens/
+**/.claude-cache-lens/
