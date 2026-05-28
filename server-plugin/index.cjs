@@ -6,7 +6,7 @@ const https = require('node:https');
 const path = require('node:path');
 
 const MAX_ITEMS = 100;
-const PLUGIN_VERSION = '0.1.16';
+const PLUGIN_VERSION = '0.1.17';
 const SERVER_PLUGIN_PACKAGE_NAME = 'claude-cache-lens-server-plugin';
 const CACHE_MINIMUM_TOKENS = Object.freeze({
   opus45Plus: 4096,
@@ -17,6 +17,16 @@ const CACHE_MINIMUM_TOKENS = Object.freeze({
   unknown: 1024,
 });
 const snapshots = [];
+const guardState = {
+  enabled: true,
+  blockedRequests: 0,
+  lastBlockedAt: null,
+  lastBlockedTarget: null,
+  lastBlockedModel: null,
+  lastBlockedPrefixTokens: null,
+  lastBlockedMinimumTokens: null,
+  lastBlockedReason: null,
+};
 const patcherState = {
   installed: false,
   patchedRequests: 0,
@@ -106,8 +116,24 @@ async function init(router) {
       ok: true,
       version: PLUGIN_VERSION,
       selfUpdate: getSelfUpdateStatus(),
+      guard: guardState,
       ...patcherState,
       userId: getMetadataUserId(),
+    });
+  });
+
+  router.get('/guard', (_req, res) => {
+    res.json({
+      ok: true,
+      guard: guardState,
+    });
+  });
+
+  router.post('/guard', (req, res) => {
+    guardState.enabled = Boolean(req.body?.enabled);
+    res.json({
+      ok: true,
+      guard: guardState,
     });
   });
 
@@ -330,6 +356,15 @@ function makePatchedRequest(protocol, original) {
       patcherState.lastMinimumCacheTokens = patchResult.minimumCacheTokens ?? null;
       patcherState.lastBelowMinimum = patchResult.belowMinimum ?? null;
       patcherState.lastAutoBreakpoint = patchResult.autoBreakpoint || null;
+      if (shouldGuardBlock(patchResult)) {
+        recordGuardBlock(patchResult, requestInfo, now);
+        const error = new Error(
+          `Claude Cache Lens blocked request: cache prefix ${patchResult.estimatedPromptTokens || 0}/${patchResult.minimumCacheTokens} tokens.`
+        );
+        error.code = 'CLAUDE_CACHE_LENS_GUARD';
+        process.nextTick(() => req.destroy(error));
+        return req;
+      }
       if (patchResult.changed) {
         req.setHeader('content-length', Buffer.byteLength(patchResult.body));
         patcherState.patchedRequests += 1;
@@ -353,6 +388,24 @@ function makePatchedRequest(protocol, original) {
 
     return req;
   };
+}
+
+function shouldGuardBlock(patchResult) {
+  return Boolean(
+    guardState.enabled
+    && patchResult?.minimumCacheTokens
+    && patchResult.belowMinimum === true
+  );
+}
+
+function recordGuardBlock(patchResult, requestInfo, now) {
+  guardState.blockedRequests += 1;
+  guardState.lastBlockedAt = now;
+  guardState.lastBlockedTarget = sanitizeTarget(requestInfo.href);
+  guardState.lastBlockedModel = patchResult.model || null;
+  guardState.lastBlockedPrefixTokens = patchResult.estimatedPromptTokens ?? null;
+  guardState.lastBlockedMinimumTokens = patchResult.minimumCacheTokens ?? null;
+  guardState.lastBlockedReason = patchResult.autoBreakpoint?.reason || 'below_minimum';
 }
 
 function patchClaudeCacheRequestBuffer(buffer, requestInfo) {
@@ -974,6 +1027,7 @@ module.exports = {
     normalizeClaudeSettings,
     patchClaudeCacheRequestBody,
     readClaudeConfig,
+    shouldGuardBlock,
     updateConfigYaml,
   },
   info: {

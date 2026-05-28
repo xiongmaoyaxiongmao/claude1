@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.17
+
+- Add Cache Guard, enabled by default, to block outgoing Claude requests when the actual cache prefix is below the model minimum.
+- Add a panel Guard toggle and blocked-request status so failed cache attempts stop before reaching the provider.
+
 ## 0.1.16
 
 - Automatically add a cache breakpoint at the first stable prompt segment that reaches the model's cache minimum.

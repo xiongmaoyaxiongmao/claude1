@@ -188,6 +188,10 @@ function mountPanel() {
             <input id="ccl_extended_ttl" type="checkbox">
             <span>1h TTL</span>
           </label>
+          <label class="checkbox_label ccl-guard-control">
+            <input id="ccl_guard_minimum" type="checkbox" checked>
+            <span>Guard</span>
+          </label>
         </div>
         <pre id="ccl_config_text" class="ccl-config-text">Waiting for generation.</pre>
         <div id="ccl_config_hint" class="ccl-note">The plugin will generate the exact config.yaml snippet after the first request.</div>
@@ -251,6 +255,9 @@ function bindEvents(context) {
     saveSettings();
     renderPanel();
   });
+  panel.querySelector('#ccl_guard_minimum')?.addEventListener('change', (event) => {
+    setGuardEnabled(Boolean(event.target.checked)).catch(() => {});
+  });
   panel.querySelector('#ccl_export')?.addEventListener('click', exportDiagnostics);
 
   const events = context.event_types || {};
@@ -272,6 +279,7 @@ function hydrateControls() {
   const enabled = document.getElementById('ccl_enabled');
   const depthSelect = document.getElementById('ccl_depth_select');
   const extendedTTL = document.getElementById('ccl_extended_ttl');
+  const guard = document.getElementById('ccl_guard_minimum');
   if (enabled) enabled.checked = Boolean(settings.enabled);
   if (depthSelect) {
     const value = settings.cachingAtDepthOverride == null ? 2 : settings.cachingAtDepthOverride;
@@ -279,6 +287,9 @@ function hydrateControls() {
   }
   if (extendedTTL) {
     extendedTTL.checked = Boolean(settings.extendedTTLOverride);
+  }
+  if (guard && latestState.serverStatus?.payload?.guard) {
+    guard.checked = Boolean(latestState.serverStatus.payload.guard.enabled);
   }
 }
 
@@ -458,6 +469,29 @@ async function syncServerPlugin() {
   }
 }
 
+async function setGuardEnabled(enabled) {
+  const hintNode = document.getElementById('ccl_server_status');
+  try {
+    const response = await fetch('/api/plugins/claude-cache-lens/guard', {
+      method: 'POST',
+      headers: getJsonHeaders(),
+      body: JSON.stringify({ enabled }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `Server plugin returned ${response.status}`);
+    }
+    if (latestState.serverStatus?.payload) {
+      latestState.serverStatus.payload.guard = payload.guard;
+    }
+    renderServerStatus();
+  } catch (error) {
+    if (hintNode) {
+      hintNode.textContent = `无法切换 Guard：${error.message || error}`;
+    }
+  }
+}
+
 async function loadServerStatus() {
   latestState.serverStatus = { state: 'checking' };
   renderServerStatus();
@@ -537,11 +571,14 @@ function renderServerStatus() {
     const auto = payload.lastAutoBreakpoint?.reason
       ? `；自动断点=${payload.lastAutoBreakpoint.reason}${payload.lastAutoBreakpoint.tokens ? `(${payload.lastAutoBreakpoint.tokens})` : ''}`
       : '';
+    const guard = payload.guard
+      ? `；Guard=${payload.guard.enabled ? 'On' : 'Off'}${payload.guard.blockedRequests ? `，已拦截 ${payload.guard.blockedRequests} 次` : ''}`
+      : '';
     const skipped = payload.skippedRequests || 0;
     const skipHint = skipped
       ? `；最近跳过=${payload.lastSkippedReason || 'unknown'}${payload.lastSkippedModel ? ` (${payload.lastSkippedModel})` : ''}`
       : '';
-    node.textContent = `Server plugin${version} 已加载；已补丁 ${payload.patchedRequests || 0} 次；已自带缓存 ${payload.cacheReadyRequests || 0} 次；跳过 ${skipped} 次${skipHint}${threshold}${auto}${update}；user_id=${payload.userId || '-'}`;
+    node.textContent = `Server plugin${version} 已加载；已补丁 ${payload.patchedRequests || 0} 次；已自带缓存 ${payload.cacheReadyRequests || 0} 次；跳过 ${skipped} 次${skipHint}${threshold}${auto}${guard}${update}；user_id=${payload.userId || '-'}`;
     return;
   }
 

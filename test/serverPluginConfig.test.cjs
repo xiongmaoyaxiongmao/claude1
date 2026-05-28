@@ -239,10 +239,24 @@ test('does not patch non-Claude chat completion bodies', () => {
   assert.equal(body.metadata, undefined);
 });
 
+test('guard blocks only Claude requests below the cache minimum', () => {
+  assert.equal(_private.shouldGuardBlock({
+    minimumCacheTokens: 4096,
+    belowMinimum: true,
+  }), true);
+  assert.equal(_private.shouldGuardBlock({
+    minimumCacheTokens: 4096,
+    belowMinimum: false,
+  }), false);
+  assert.equal(_private.shouldGuardBlock({
+    belowMinimum: true,
+  }), false);
+});
+
 test('compares semantic versions for server plugin self update', () => {
-  assert.equal(_private.compareVersions('0.1.16', '0.1.15'), 1);
-  assert.equal(_private.compareVersions('0.1.16', '0.1.16'), 0);
-  assert.equal(_private.compareVersions('0.1.9', '0.1.16'), -1);
+  assert.equal(_private.compareVersions('0.1.17', '0.1.16'), 1);
+  assert.equal(_private.compareVersions('0.1.17', '0.1.17'), 0);
+  assert.equal(_private.compareVersions('0.1.9', '0.1.17'), -1);
 });
 
 test('copies only server plugin entry files during self update', () => {
