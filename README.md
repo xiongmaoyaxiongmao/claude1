@@ -65,7 +65,7 @@ The server plugin also patches outgoing Claude requests in-process:
 
 - Adds top-level `metadata.user_id` with a stable default value.
 - Adds compatible cache breakpoints to native Claude and OpenAI-compatible Claude request bodies.
-- Shows the estimated prompt tokens against the model-family cache minimum.
+- Shows the estimated cache-controlled prefix tokens against the model-family cache minimum.
 - Leaves non-Claude models untouched.
 
 Check whether it loaded:
@@ -103,4 +103,4 @@ git push -u origin main
 - `claude.cachingAtDepth`: starts at `2` when the prior request prefix matches the current request with the last two messages excluded.
 - `claude.extendedTTL`: recommended only for large stable prefixes.
 - Dynamic macros, time/date content, summaries, vector retrieval, web search, and World Info inside the stable prefix are flagged as cache-miss risks.
-- Cache minimum diagnostics use Anthropic's current published thresholds: 4096 estimated tokens for Opus 4.5+ and Haiku 4.5, 2048 for Haiku 3.5, and 1024 for Sonnet 4.x / older Opus.
+- Cache minimum diagnostics use the actual cache breakpoint prefix, not the whole request. Current Anthropic thresholds: 4096 estimated tokens for Opus 4.5+ and Haiku 4.5, 2048 for Haiku 3.5, and 1024 for Sonnet 4.x / older Opus.

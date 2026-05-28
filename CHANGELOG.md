@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.15
+
+- Show the estimated cache-controlled prefix size separately from the total prompt size.
+- Use the actual cache breakpoint prefix, not the whole request, for minimum-token diagnostics.
+
 ## 0.1.14
 
 - Tell users when the running server plugin is too old for the panel self-sync button and still needs one manual copy.

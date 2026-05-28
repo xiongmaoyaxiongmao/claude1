@@ -6,7 +6,7 @@ const https = require('node:https');
 const path = require('node:path');
 
 const MAX_ITEMS = 100;
-const PLUGIN_VERSION = '0.1.13';
+const PLUGIN_VERSION = '0.1.15';
 const SERVER_PLUGIN_PACKAGE_NAME = 'claude-cache-lens-server-plugin';
 const CACHE_MINIMUM_TOKENS = Object.freeze({
   opus45Plus: 4096,
@@ -27,6 +27,7 @@ const patcherState = {
   lastSeenModel: null,
   lastModelFamily: null,
   lastEstimatedPromptTokens: null,
+  lastTotalPromptTokens: null,
   lastMinimumCacheTokens: null,
   lastBelowMinimum: null,
   lastPatchedAt: null,
@@ -324,6 +325,7 @@ function makePatchedRequest(protocol, original) {
       patcherState.lastSeenModel = patchResult.model || null;
       patcherState.lastModelFamily = patchResult.modelFamily || null;
       patcherState.lastEstimatedPromptTokens = patchResult.estimatedPromptTokens ?? null;
+      patcherState.lastTotalPromptTokens = patchResult.totalPromptTokens ?? null;
       patcherState.lastMinimumCacheTokens = patchResult.minimumCacheTokens ?? null;
       patcherState.lastBelowMinimum = patchResult.belowMinimum ?? null;
       if (patchResult.changed) {
@@ -378,6 +380,7 @@ function patchClaudeCacheRequestBuffer(buffer, requestInfo) {
       model: result.model,
       modelFamily: result.modelFamily,
       estimatedPromptTokens: result.estimatedPromptTokens,
+      totalPromptTokens: result.totalPromptTokens,
       minimumCacheTokens: result.minimumCacheTokens,
       belowMinimum: result.belowMinimum,
       reason: result.reason,
@@ -391,6 +394,7 @@ function patchClaudeCacheRequestBuffer(buffer, requestInfo) {
     model: result.model,
     modelFamily: result.modelFamily,
     estimatedPromptTokens: result.estimatedPromptTokens,
+    totalPromptTokens: result.totalPromptTokens,
     minimumCacheTokens: result.minimumCacheTokens,
     belowMinimum: result.belowMinimum,
     userId: result.userId,
@@ -409,8 +413,7 @@ function patchClaudeCacheRequestBody(body, options = {}) {
 
   const modelFamily = getModelFamily(model);
   const minimumCacheTokens = getCacheMinimumTokens(model);
-  const estimatedPromptTokens = estimateCacheablePromptTokens(body);
-  const belowMinimum = estimatedPromptTokens > 0 && estimatedPromptTokens < minimumCacheTokens;
+  const totalPromptTokens = estimatePromptTokens(body);
   const settings = options.settings || {};
   const ttl = settings.extendedTTL ? '1h' : '5m';
   const cacheControl = { type: 'ephemeral', ttl };
@@ -435,12 +438,16 @@ function patchClaudeCacheRequestBody(body, options = {}) {
     changed = true;
   }
 
+  const estimatedPromptTokens = estimateCacheControlledPrefixTokens(body);
+  const belowMinimum = estimatedPromptTokens < minimumCacheTokens;
+
   return {
     changed,
     userId,
     model,
     modelFamily,
     estimatedPromptTokens,
+    totalPromptTokens,
     minimumCacheTokens,
     belowMinimum,
     cacheReady: !changed && isCacheReady(body),
@@ -484,42 +491,68 @@ function estimateTokens(textOrChars) {
   return Math.max(0, Math.ceil(chars / 4));
 }
 
-function estimateCacheablePromptTokens(body) {
-  const parts = [];
-  appendCacheablePromptPart(parts, body?.tools);
-  appendCacheablePromptPart(parts, body?.system);
+function estimatePromptTokens(body) {
+  const segments = [];
+  appendPromptSegments(segments, body?.tools);
+  appendPromptSegments(segments, body?.system);
   if (Array.isArray(body?.messages)) {
     for (const message of body.messages) {
-      appendCacheablePromptPart(parts, message?.content);
+      appendPromptSegments(segments, message?.content, Boolean(message?.cache_control || message?.content?.cache_control));
     }
   }
-  return estimateTokens(parts.join('\n\n'));
+  return estimateTokens(segments.map((segment) => segment.text).join('\n\n'));
 }
 
-function appendCacheablePromptPart(parts, value) {
+function estimateCacheControlledPrefixTokens(body) {
+  const segments = [];
+  appendPromptSegments(segments, body?.tools);
+  appendPromptSegments(segments, body?.system);
+  if (Array.isArray(body?.messages)) {
+    for (const message of body.messages) {
+      appendPromptSegments(segments, message?.content, Boolean(message?.cache_control || message?.content?.cache_control));
+    }
+  }
+
+  let prefix = '';
+  let maxTokens = 0;
+  for (const segment of segments) {
+    prefix = prefix ? `${prefix}\n\n${segment.text}` : segment.text;
+    if (segment.hasCacheControl) {
+      maxTokens = Math.max(maxTokens, estimateTokens(prefix));
+    }
+  }
+  return maxTokens;
+}
+
+function appendPromptSegments(segments, value, inheritedCacheControl = false) {
   if (value == null) {
     return;
   }
   if (typeof value === 'string') {
-    parts.push(value);
+    segments.push({ text: value, hasCacheControl: inheritedCacheControl });
     return;
   }
   if (Array.isArray(value)) {
     for (const item of value) {
-      appendCacheablePromptPart(parts, item);
+      appendPromptSegments(segments, item, inheritedCacheControl);
     }
     return;
   }
   if (typeof value === 'object') {
+    const hasCacheControl = inheritedCacheControl || Boolean(value.cache_control);
     if (typeof value.text === 'string') {
-      parts.push(value.text);
+      segments.push({ text: value.text, hasCacheControl });
       return;
     }
     if (typeof value.content === 'string') {
-      parts.push(value.content);
+      segments.push({ text: value.content, hasCacheControl });
       return;
     }
-    parts.push(JSON.stringify(value));
+    if (Array.isArray(value.content)) {
+      appendPromptSegments(segments, value.content, hasCacheControl);
+      return;
+    }
+    segments.push({ text: JSON.stringify(value), hasCacheControl });
   }
 }
 
@@ -836,7 +869,8 @@ module.exports = {
     buildClaudeBlock,
     compareVersions,
     copyServerPluginFiles,
-    estimateCacheablePromptTokens,
+    estimateCacheControlledPrefixTokens,
+    estimatePromptTokens,
     getCacheMinimumTokens,
     getModelFamily,
     isClaudeLikeModel,

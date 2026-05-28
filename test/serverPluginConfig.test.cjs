@@ -65,6 +65,9 @@ test('patches Claude native request body with metadata and cache control', () =>
   assert.equal(body.cache_control, undefined);
   assert.deepEqual(body.system[0].cache_control, { type: 'ephemeral', ttl: '5m' });
   assert.equal(result.minimumCacheTokens, 4096);
+  assert.equal(result.estimatedPromptTokens, _private.estimateCacheControlledPrefixTokens(body));
+  assert.equal(result.totalPromptTokens, _private.estimatePromptTokens(body));
+  assert.equal(result.belowMinimum, true);
 });
 
 test('patches OpenAI-compatible Claude message content at selected depth', () => {
@@ -109,6 +112,28 @@ test('patches Claude-family aliases without the claude prefix', () => {
   assert.equal(result.minimumCacheTokens, 4096);
   assert.equal(body.metadata.user_id, 'money');
   assert.equal(body.messages[0].content[0].cache_control.type, 'ephemeral');
+});
+
+test('estimates cache-controlled prefix separately from total prompt', () => {
+  const body = {
+    model: 'claude-opus-4-7',
+    system: 'tiny system',
+    messages: [
+      { role: 'user', content: 'older stable user text '.repeat(900) },
+      { role: 'assistant', content: 'older stable assistant text '.repeat(900) },
+      { role: 'user', content: 'current input' },
+    ],
+  };
+
+  const result = _private.patchClaudeCacheRequestBody(body, {
+    userId: 'money',
+    settings: { cachingAtDepth: -1, extendedTTL: false },
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.totalPromptTokens > result.estimatedPromptTokens, true);
+  assert.equal(result.estimatedPromptTokens < result.minimumCacheTokens, true);
+  assert.equal(result.belowMinimum, true);
 });
 
 test('treats already cache-ready Claude bodies as ready, not skipped', () => {
@@ -170,9 +195,9 @@ test('does not patch non-Claude chat completion bodies', () => {
 });
 
 test('compares semantic versions for server plugin self update', () => {
-  assert.equal(_private.compareVersions('0.1.13', '0.1.12'), 1);
-  assert.equal(_private.compareVersions('0.1.13', '0.1.13'), 0);
-  assert.equal(_private.compareVersions('0.1.9', '0.1.13'), -1);
+  assert.equal(_private.compareVersions('0.1.15', '0.1.14'), 1);
+  assert.equal(_private.compareVersions('0.1.15', '0.1.15'), 0);
+  assert.equal(_private.compareVersions('0.1.9', '0.1.15'), -1);
 });
 
 test('copies only server plugin entry files during self update', () => {

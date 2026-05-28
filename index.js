@@ -532,7 +532,7 @@ function renderServerStatus() {
       ? `；扩展内有新版 server plugin ${payload.selfUpdate.sourceVersion}，点插头按钮同步`
       : '';
     const threshold = payload.lastMinimumCacheTokens
-      ? `；估算 ${payload.lastEstimatedPromptTokens || 0}/${payload.lastMinimumCacheTokens} tokens${payload.lastBelowMinimum ? '，低于缓存门槛' : ''}`
+      ? `；缓存前缀 ${payload.lastEstimatedPromptTokens || 0}/${payload.lastMinimumCacheTokens} tokens${payload.lastTotalPromptTokens ? `，总 ${payload.lastTotalPromptTokens}` : ''}${payload.lastBelowMinimum ? '，低于缓存门槛' : ''}`
       : '';
     const skipped = payload.skippedRequests || 0;
     const skipHint = skipped
