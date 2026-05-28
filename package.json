@@ -1,0 +1,25 @@
+{
+  "name": "sillytavern-claude-cache-lens",
+  "version": "0.1.0",
+  "description": "SillyTavern extension and optional Claude gateway for prompt cache diagnostics.",
+  "type": "module",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xiongmaoyaxiongmao/-.git"
+  },
+  "scripts": {
+    "test": "node --test",
+    "gateway": "node gateway/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "sillytavern",
+    "claude",
+    "prompt-cache",
+    "extension"
+  ],
+  "license": "AGPL-3.0-or-later"
+}
