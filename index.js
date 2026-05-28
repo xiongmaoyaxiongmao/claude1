@@ -574,11 +574,14 @@ function renderServerStatus() {
     const guard = payload.guard
       ? `；Guard=${payload.guard.enabled ? 'On' : 'Off'}${payload.guard.blockedRequests ? `，已拦截 ${payload.guard.blockedRequests} 次` : ''}`
       : '';
+    const lastClaude = payload.lastClaude
+      ? `；Claude前缀${payload.lastClaude.matchedPreviousPrefix ? '稳定' : '变化'}${payload.lastClaude.previousAt ? '' : '(首条)'}`
+      : '';
     const skipped = payload.skippedRequests || 0;
     const skipHint = skipped
       ? `；最近跳过=${payload.lastSkippedReason || 'unknown'}${payload.lastSkippedModel ? ` (${payload.lastSkippedModel})` : ''}`
       : '';
-    node.textContent = `Server plugin${version} 已加载；已补丁 ${payload.patchedRequests || 0} 次；已自带缓存 ${payload.cacheReadyRequests || 0} 次；跳过 ${skipped} 次${skipHint}${threshold}${auto}${guard}${update}；user_id=${payload.userId || '-'}`;
+    node.textContent = `Server plugin${version} 已加载；已补丁 ${payload.patchedRequests || 0} 次；已自带缓存 ${payload.cacheReadyRequests || 0} 次；跳过 ${skipped} 次${skipHint}${threshold}${auto}${guard}${lastClaude}${update}；user_id=${payload.userId || '-'}`;
     return;
   }
 

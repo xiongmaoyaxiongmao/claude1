@@ -1,6 +1,6 @@
 {
   "name": "sillytavern-claude-cache-lens",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "SillyTavern extension and server plugin for Claude prompt cache diagnostics and config.",
   "type": "module",
   "private": true,

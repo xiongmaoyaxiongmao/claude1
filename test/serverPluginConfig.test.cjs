@@ -157,6 +157,40 @@ test('automatically adds a stable cache breakpoint when it reaches the minimum',
   assert.equal(result.belowMinimum, false);
   assert.equal(result.autoBreakpoint.reason, 'auto_minimum_breakpoint');
   assert.equal(body.messages[0].content[0].cache_control.type, 'ephemeral');
+  assert.equal(typeof result.cachePrefixHash, 'string');
+  assert.equal(result.cachePrefixHash, _private.getCacheControlledPrefixInfo(body).hash);
+});
+
+test('cache prefix hash changes when the stable prefix changes', () => {
+  const first = {
+    model: 'claude-opus-4-7',
+    system: 'tiny system',
+    messages: [
+      { role: 'user', content: 'stable user text '.repeat(900) },
+      { role: 'assistant', content: 'stable assistant text '.repeat(900) },
+      { role: 'user', content: 'current input' },
+    ],
+  };
+  const second = {
+    model: 'claude-opus-4-7',
+    system: 'tiny system changed',
+    messages: [
+      { role: 'user', content: 'stable user text '.repeat(900) },
+      { role: 'assistant', content: 'stable assistant text '.repeat(900) },
+      { role: 'user', content: 'current input' },
+    ],
+  };
+
+  const firstResult = _private.patchClaudeCacheRequestBody(first, {
+    userId: 'money',
+    settings: { cachingAtDepth: -1, extendedTTL: false },
+  });
+  const secondResult = _private.patchClaudeCacheRequestBody(second, {
+    userId: 'money',
+    settings: { cachingAtDepth: -1, extendedTTL: false },
+  });
+
+  assert.notEqual(firstResult.cachePrefixHash, secondResult.cachePrefixHash);
 });
 
 test('does not use the current user input as an automatic breakpoint before assistant prefill', () => {
@@ -254,9 +288,9 @@ test('guard blocks only Claude requests below the cache minimum', () => {
 });
 
 test('compares semantic versions for server plugin self update', () => {
-  assert.equal(_private.compareVersions('0.1.17', '0.1.16'), 1);
-  assert.equal(_private.compareVersions('0.1.17', '0.1.17'), 0);
-  assert.equal(_private.compareVersions('0.1.9', '0.1.17'), -1);
+  assert.equal(_private.compareVersions('0.1.18', '0.1.17'), 1);
+  assert.equal(_private.compareVersions('0.1.18', '0.1.18'), 0);
+  assert.equal(_private.compareVersions('0.1.9', '0.1.18'), -1);
 });
 
 test('copies only server plugin entry files during self update', () => {

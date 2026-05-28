@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.18
+
+- Track the last Claude cache-prefix hash and whether it matches the previous Claude request for the same target/model/user.
+- Keep Claude diagnostics from being overwritten by non-Claude requests.
+
 ## 0.1.17
 
 - Add Cache Guard, enabled by default, to block outgoing Claude requests when the actual cache prefix is below the model minimum.
