@@ -525,7 +525,10 @@ function renderServerStatus() {
   if (status.state === 'active') {
     const payload = status.payload || {};
     const version = payload.version ? ` v${payload.version}` : '';
-    const update = payload.selfUpdate?.updateAvailable
+    const isLegacyServerPlugin = compareVersions(payload.version || '0.0.0', '0.1.12') < 0;
+    const update = isLegacyServerPlugin
+      ? '；server plugin 太旧，插头同步需要 v0.1.12+，这次还要手动复制一次'
+      : payload.selfUpdate?.updateAvailable
       ? `；扩展内有新版 server plugin ${payload.selfUpdate.sourceVersion}，点插头按钮同步`
       : '';
     const threshold = payload.lastMinimumCacheTokens
@@ -555,6 +558,26 @@ function renderServerStatus() {
   }
 
   node.textContent = `Server plugin 检查失败：${status.message || status.state}`;
+}
+
+function compareVersions(a, b) {
+  const left = parseVersion(a);
+  const right = parseVersion(b);
+  for (let i = 0; i < 3; i += 1) {
+    if (left[i] !== right[i]) {
+      return left[i] > right[i] ? 1 : -1;
+    }
+  }
+  return 0;
+}
+
+function parseVersion(value) {
+  return String(value || '0.0.0')
+    .split('.')
+    .slice(0, 3)
+    .map((part) => Number.parseInt(part, 10) || 0)
+    .concat([0, 0, 0])
+    .slice(0, 3);
 }
 
 function syncSettingsFromServerConfig(current) {

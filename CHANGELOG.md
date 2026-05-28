@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.14
+
+- Tell users when the running server plugin is too old for the panel self-sync button and still needs one manual copy.
+
 ## 0.1.13
 
 - Add current model-specific cache minimum diagnostics for Opus, Sonnet, and Haiku.
