@@ -16,6 +16,9 @@ const defaultSettings = Object.freeze({
 });
 
 let initialized = false;
+let eventsBound = false;
+let importedGetContext = null;
+let contextImportAttempted = false;
 let latestState = {
   snapshot: null,
   analysis: null,
@@ -64,21 +67,33 @@ export async function onClean() {
   localStorage.removeItem(HISTORY_KEY);
 }
 
-queueMicrotask(init);
+queueMicrotask(() => {
+  init().catch((error) => console.error('[Claude Cache Lens] init failed:', error));
+});
 
-function init() {
-  if (initialized) {
+async function init() {
+  await loadContextModule();
+
+  if (initialized && eventsBound) {
     return;
   }
-  const context = getContextSafe();
-  if (!context) {
-    setTimeout(init, 250);
+
+  if (!mountPanel()) {
+    setTimeout(() => init().catch(() => {}), 250);
     return;
   }
+
   initialized = true;
   ensureSettings();
-  mountPanel();
-  bindEvents(context);
+
+  const context = getContextSafe();
+  if (context && !eventsBound) {
+    bindEvents(context);
+    eventsBound = true;
+  } else if (!eventsBound) {
+    setTimeout(() => init().catch(() => {}), 500);
+  }
+
   latestState.snapshot = readJson(LAST_SNAPSHOT_KEY);
   latestState.analysis = latestState.snapshot ? analyzeSnapshot(latestState.snapshot, null) : null;
   renderPanel();
@@ -86,9 +101,12 @@ function init() {
 
 function mountPanel() {
   if (document.getElementById('claude-cache-lens-panel')) {
-    return;
+    return true;
   }
-  const target = document.querySelector('#extensions_settings2') || document.querySelector('#extensions_settings') || document.body;
+  const target = document.querySelector('#extensions_settings2') || document.querySelector('#extensions_settings');
+  if (!target) {
+    return false;
+  }
   const wrapper = document.createElement('div');
   wrapper.id = 'claude-cache-lens-panel';
   wrapper.className = 'claude-cache-lens inline-drawer';
@@ -160,6 +178,7 @@ function mountPanel() {
   `;
   target.appendChild(wrapper);
   hydrateControls();
+  return true;
 }
 
 function bindEvents(context) {
@@ -380,9 +399,24 @@ function saveSettings() {
 
 function getContextSafe() {
   try {
-    return globalThis.SillyTavern?.getContext?.() || null;
+    return globalThis.SillyTavern?.getContext?.() || importedGetContext?.() || null;
   } catch {
     return null;
+  }
+}
+
+async function loadContextModule() {
+  if (contextImportAttempted) {
+    return;
+  }
+  contextImportAttempted = true;
+  try {
+    const module = await import('../../extensions.js');
+    if (typeof module.getContext === 'function') {
+      importedGetContext = module.getContext;
+    }
+  } catch (error) {
+    console.warn('[Claude Cache Lens] Falling back to global SillyTavern context:', error);
   }
 }
 

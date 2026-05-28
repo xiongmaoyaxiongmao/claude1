@@ -7,10 +7,10 @@
   "js": "index.js",
   "css": "style.css",
   "author": "Codex",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "homePage": "https://github.com/xiongmaoyaxiongmao/-.git",
   "auto_update": true,
-  "minimum_client_version": "1.12.0",
+  "minimum_client_version": "1.10.0",
   "generate_interceptor": "claudeCacheLensInterceptor",
   "hooks": {
     "activate": "onActivate",
