@@ -6,6 +6,7 @@ const https = require('node:https');
 const path = require('node:path');
 
 const MAX_ITEMS = 100;
+const PLUGIN_VERSION = '0.1.10';
 const snapshots = [];
 const patcherState = {
   installed: false,
@@ -79,6 +80,7 @@ async function init(router) {
   router.get('/patcher', (_req, res) => {
     res.json({
       ok: true,
+      version: PLUGIN_VERSION,
       ...patcherState,
       userId: getMetadataUserId(),
     });
@@ -532,5 +534,6 @@ module.exports = {
     id: 'claude-cache-lens',
     name: 'Claude Cache Lens',
     description: 'Stores SillyTavern Claude prompt-cache diagnostics for Cache Lens.',
+    version: PLUGIN_VERSION,
   },
 };

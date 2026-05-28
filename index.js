@@ -24,6 +24,7 @@ let latestState = {
   snapshot: null,
   analysis: null,
   serverConfigLoaded: false,
+  serverStatus: null,
 };
 
 globalThis.claudeCacheLensInterceptor = async function claudeCacheLensInterceptor(chat, contextSize, abort, type) {
@@ -99,6 +100,7 @@ async function init() {
   latestState.analysis = latestState.snapshot ? analyzeSnapshot(latestState.snapshot, null) : null;
   renderPanel();
   loadServerConfig().catch(() => {});
+  loadServerStatus().catch(() => {});
 }
 
 function mountPanel() {
@@ -186,6 +188,7 @@ function mountPanel() {
         </div>
         <pre id="ccl_config_text" class="ccl-config-text">Waiting for generation.</pre>
         <div id="ccl_config_hint" class="ccl-note">The plugin will generate the exact config.yaml snippet after the first request.</div>
+        <div id="ccl_server_status" class="ccl-note">Server plugin: checking...</div>
       </div>
 
       <div class="ccl-section">
@@ -214,11 +217,20 @@ function bindEvents(context) {
     settings.enabled = Boolean(event.target.checked);
     saveSettings();
   });
-  panel.querySelector('#ccl_refresh')?.addEventListener('click', () => renderPanel());
+  panel.querySelector('#ccl_refresh')?.addEventListener('click', () => {
+    renderPanel();
+    loadServerConfig({ force: true }).catch(() => {});
+    loadServerStatus().catch(() => {});
+  });
   panel.querySelector('#ccl_clear')?.addEventListener('click', () => {
     localStorage.removeItem(LAST_SNAPSHOT_KEY);
     localStorage.removeItem(HISTORY_KEY);
-    latestState = { snapshot: null, analysis: null, serverConfigLoaded: latestState.serverConfigLoaded };
+    latestState = {
+      snapshot: null,
+      analysis: null,
+      serverConfigLoaded: latestState.serverConfigLoaded,
+      serverStatus: latestState.serverStatus,
+    };
     renderPanel();
   });
   panel.querySelector('#ccl_copy_config')?.addEventListener('click', copyRecommendedConfig);
@@ -280,6 +292,7 @@ function renderPanel() {
   renderStatus(analysis?.risk || 'Idle');
   renderSources(snapshot?.detectedSources || {});
   renderConfig(analysis);
+  renderServerStatus();
   renderDiff(analysis?.prefixDiff);
   renderReasons(analysis?.reasons || []);
   hydrateControls();
@@ -387,6 +400,7 @@ async function applyRecommendedConfig() {
       syncSettingsFromServerConfig(payload.current);
       hintNode.textContent = '已写入 config.yaml，已备份。重启 SillyTavern 后生效。';
       renderPanel();
+      loadServerStatus().catch(() => {});
     }
   } catch (error) {
     if (hintNode) {
@@ -395,8 +409,8 @@ async function applyRecommendedConfig() {
   }
 }
 
-async function loadServerConfig() {
-  if (latestState.serverConfigLoaded) {
+async function loadServerConfig(options = {}) {
+  if (latestState.serverConfigLoaded && !options.force) {
     return;
   }
   const response = await fetch('/api/plugins/claude-cache-lens/config', {
@@ -413,6 +427,95 @@ async function loadServerConfig() {
   latestState.serverConfigLoaded = true;
   syncSettingsFromServerConfig(payload.current);
   renderPanel();
+}
+
+async function loadServerStatus() {
+  latestState.serverStatus = { state: 'checking' };
+  renderServerStatus();
+
+  try {
+    const response = await fetch('/api/plugins/claude-cache-lens/patcher', {
+      method: 'GET',
+      headers: getJsonHeaders(),
+    });
+    const payload = await response.json().catch(() => null);
+    if (response.ok && payload?.ok) {
+      latestState.serverStatus = {
+        state: payload.installed ? 'active' : 'loaded',
+        payload,
+      };
+      renderServerStatus();
+      return;
+    }
+
+    if (response.status === 404) {
+      latestState.serverStatus = await detectOldServerPlugin();
+      renderServerStatus();
+      return;
+    }
+
+    latestState.serverStatus = { state: 'error', message: `Server plugin returned ${response.status}` };
+    renderServerStatus();
+  } catch (error) {
+    latestState.serverStatus = { state: 'missing', message: error.message || String(error) };
+    renderServerStatus();
+  }
+}
+
+async function detectOldServerPlugin() {
+  try {
+    const response = await fetch('/api/plugins/claude-cache-lens/config', {
+      method: 'GET',
+      headers: getJsonHeaders(),
+    });
+    if (response.ok) {
+      return {
+        state: 'outdated',
+        message: '/config exists but /patcher is missing.',
+      };
+    }
+  } catch {
+    // Ignore and report as missing below.
+  }
+  return {
+    state: 'missing',
+    message: 'Server plugin route not found.',
+  };
+}
+
+function renderServerStatus() {
+  const node = document.getElementById('ccl_server_status');
+  if (!node) return;
+
+  const status = latestState.serverStatus;
+  if (!status || status.state === 'checking') {
+    node.textContent = 'Server plugin: checking...';
+    return;
+  }
+
+  if (status.state === 'active') {
+    const payload = status.payload || {};
+    const version = payload.version ? ` v${payload.version}` : '';
+    node.textContent = `Server plugin${version} 已加载；已补丁请求 ${payload.patchedRequests || 0} 次；user_id=${payload.userId || '-'}`;
+    return;
+  }
+
+  if (status.state === 'loaded') {
+    node.textContent = 'Server plugin 已加载，但 request patcher 未安装。请重启 SillyTavern。';
+    return;
+  }
+
+  if (status.state === 'outdated') {
+    node.textContent = 'Server plugin 是旧版：/config 可用，但 /patcher 不存在。重新复制 server-plugin 目录并完整重启 ST。';
+    return;
+  }
+
+  if (status.state === 'missing') {
+    node.textContent = 'Server plugin 未加载：确认 enableServerPlugins=true，并把 server-plugin 复制到 SillyTavern/plugins/claude-cache-lens 后重启。';
+    return;
+  }
+
+  node.textContent = `Server plugin 检查失败：${status.message || status.state}`;
 }
 
 function syncSettingsFromServerConfig(current) {

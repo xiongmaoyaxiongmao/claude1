@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.10
+
+- Show server plugin request-patcher status in the extension panel.
+- Clarify the `/patcher` health check and the old-server-plugin `Not found` case.
+
 ## 0.1.9
 
 - Add a server-side Claude request patcher that injects stable `metadata.user_id` plus prompt-cache `cache_control` into outgoing Claude requests.
