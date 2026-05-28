@@ -465,9 +465,9 @@ test('one-shot baseline write allowance bypasses prefix replacement blocks', () 
 });
 
 test('compares semantic versions for server plugin self update', () => {
-  assert.equal(_private.compareVersions('0.1.27', '0.1.26'), 1);
-  assert.equal(_private.compareVersions('0.1.27', '0.1.27'), 0);
-  assert.equal(_private.compareVersions('0.1.9', '0.1.27'), -1);
+  assert.equal(_private.compareVersions('0.1.28', '0.1.27'), 1);
+  assert.equal(_private.compareVersions('0.1.28', '0.1.28'), 0);
+  assert.equal(_private.compareVersions('0.1.9', '0.1.28'), -1);
 });
 
 test('copies only server plugin entry files during self update', () => {

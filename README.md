@@ -78,6 +78,8 @@ The server plugin also patches outgoing Claude requests in-process:
 - Shows the estimated cache-controlled prefix tokens against the model-family cache minimum.
 - Leaves non-Claude models untouched.
 
+The UI extension also includes a Prompt Relocator. It runs late in the generation interceptor order and, without reading or storing prompt text, can move risky or changing `IN_PROMPT depth=0` system injections to `IN_CHAT depth=2`. This is intended for encrypted or closed extensions that inject dynamic retrieval results into the system prompt and break Claude's prefix cache.
+
 Check whether it loaded:
 
 ```text

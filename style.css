@@ -94,7 +94,8 @@
 }
 
 .ccl-ttl-control,
-.ccl-system-control {
+.ccl-system-control,
+.ccl-relocator-control {
   min-height: 32px;
   align-items: center;
 }

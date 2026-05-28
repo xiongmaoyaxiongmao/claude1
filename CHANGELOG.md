@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.28
+
+- Add a browser-side Prompt Relocator that can move risky or changing `IN_PROMPT depth=0` system injections to `IN_CHAT depth=2` before generation.
+- Run Cache Lens late in the generation interceptor order so it can relocate prompts set by other extensions first.
+
 ## 0.1.27
 
 - Respect `claude.enableSystemPromptCache: false` in the server patcher, so dynamic or encrypted system injections do not get a system-only cache marker.

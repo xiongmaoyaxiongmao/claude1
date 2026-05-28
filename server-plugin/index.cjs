@@ -6,7 +6,7 @@ const https = require('node:https');
 const path = require('node:path');
 
 const MAX_ITEMS = 100;
-const PLUGIN_VERSION = '0.1.27';
+const PLUGIN_VERSION = '0.1.28';
 const SERVER_PLUGIN_PACKAGE_NAME = 'claude-cache-lens-server-plugin';
 const STATE_DIR = path.resolve(__dirname, '.claude-cache-lens');
 const PREFIX_HISTORY_PATH = path.join(STATE_DIR, 'prefix-history.json');

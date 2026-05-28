@@ -1,17 +1,23 @@
 import {
   analyzeSnapshot,
   createSnapshot,
+  hashString,
   summarizeHistory,
 } from './src/cacheLensCore.js';
 
 const MODULE_NAME = 'claude_cache_lens';
 const LAST_SNAPSHOT_KEY = `${MODULE_NAME}:last_snapshot`;
 const HISTORY_KEY = `${MODULE_NAME}:history`;
+const RELOCATOR_KEY = `${MODULE_NAME}:prompt_relocator`;
+const RELOCATOR_RISK_KEY_PATTERN = /(pages?|retriev|recall|memory|memo|vector|profile|persona|角色|记忆|回忆|闪回|档案)/i;
+const RELOCATOR_SKIP_KEY_PATTERN = /(quiet|author|floating_prompt|story_string|depth_prompt|world[_-]?info|wi_|scenario)/i;
 
 const defaultSettings = Object.freeze({
   enabled: true,
   sendSnapshotsToServerPlugin: true,
   maxStoredSnapshots: 20,
+  promptRelocatorEnabled: true,
+  promptRelocatorDepth: 2,
   systemPromptCacheOverride: null,
   cachingAtDepthOverride: null,
   extendedTTLOverride: null,
@@ -21,11 +27,14 @@ let initialized = false;
 let eventsBound = false;
 let importedGetContext = null;
 let contextImportAttempted = false;
+let importedPromptApi = null;
+let promptApiImportAttempted = false;
 let latestState = {
   snapshot: null,
   analysis: null,
   serverConfigLoaded: false,
   serverStatus: null,
+  relocation: null,
 };
 
 globalThis.claudeCacheLensInterceptor = async function claudeCacheLensInterceptor(chat, contextSize, abort, type) {
@@ -36,6 +45,7 @@ globalThis.claudeCacheLensInterceptor = async function claudeCacheLensIntercepto
   }
 
   const context = getContextSafe();
+  const relocation = relocatePromptInjections(context, settings);
   const previousSnapshot = readJson(LAST_SNAPSHOT_KEY);
   const snapshot = createSnapshot({
     chat: Array.isArray(chat) ? chat : [],
@@ -49,6 +59,7 @@ globalThis.claudeCacheLensInterceptor = async function claudeCacheLensIntercepto
     ...latestState,
     snapshot,
     analysis,
+    relocation,
   };
 
   writeJson(LAST_SNAPSHOT_KEY, snapshot);
@@ -68,6 +79,7 @@ export function onActivate() {
 export async function onClean() {
   localStorage.removeItem(LAST_SNAPSHOT_KEY);
   localStorage.removeItem(HISTORY_KEY);
+  localStorage.removeItem(RELOCATOR_KEY);
 }
 
 queueMicrotask(() => {
@@ -76,6 +88,7 @@ queueMicrotask(() => {
 
 async function init() {
   await loadContextModule();
+  await loadPromptApiModule();
 
   if (initialized && eventsBound) {
     return;
@@ -196,6 +209,10 @@ function mountPanel() {
             <input id="ccl_system_prompt_cache" type="checkbox">
             <span>System</span>
           </label>
+          <label class="checkbox_label ccl-relocator-control">
+            <input id="ccl_prompt_relocator" type="checkbox">
+            <span>Relocate</span>
+          </label>
           <label class="checkbox_label ccl-guard-control">
             <input id="ccl_guard_minimum" type="checkbox" checked>
             <span>Guard</span>
@@ -203,6 +220,7 @@ function mountPanel() {
         </div>
         <pre id="ccl_config_text" class="ccl-config-text">Waiting for generation.</pre>
         <div id="ccl_config_hint" class="ccl-note">The plugin will generate the exact config.yaml snippet after the first request.</div>
+        <div id="ccl_relocator_status" class="ccl-note">Prompt relocator: idle.</div>
         <div id="ccl_server_status" class="ccl-note">Server plugin: checking...</div>
       </div>
 
@@ -245,6 +263,7 @@ function bindEvents(context) {
       analysis: null,
       serverConfigLoaded: latestState.serverConfigLoaded,
       serverStatus: latestState.serverStatus,
+      relocation: latestState.relocation,
     };
     renderPanel();
   });
@@ -267,6 +286,12 @@ function bindEvents(context) {
   panel.querySelector('#ccl_system_prompt_cache')?.addEventListener('change', (event) => {
     const settings = getSettings();
     settings.systemPromptCacheOverride = Boolean(event.target.checked);
+    saveSettings();
+    renderPanel();
+  });
+  panel.querySelector('#ccl_prompt_relocator')?.addEventListener('change', (event) => {
+    const settings = getSettings();
+    settings.promptRelocatorEnabled = Boolean(event.target.checked);
     saveSettings();
     renderPanel();
   });
@@ -295,6 +320,7 @@ function hydrateControls() {
   const depthSelect = document.getElementById('ccl_depth_select');
   const extendedTTL = document.getElementById('ccl_extended_ttl');
   const systemPromptCache = document.getElementById('ccl_system_prompt_cache');
+  const promptRelocator = document.getElementById('ccl_prompt_relocator');
   const guard = document.getElementById('ccl_guard_minimum');
   if (enabled) enabled.checked = Boolean(settings.enabled);
   if (depthSelect) {
@@ -308,6 +334,9 @@ function hydrateControls() {
     systemPromptCache.checked = settings.systemPromptCacheOverride == null
       ? Boolean(latestState.analysis?.recommendations?.enableSystemPromptCache ?? true)
       : Boolean(settings.systemPromptCacheOverride);
+  }
+  if (promptRelocator) {
+    promptRelocator.checked = Boolean(settings.promptRelocatorEnabled);
   }
   if (guard && latestState.serverStatus?.payload?.guard) {
     guard.checked = Boolean(latestState.serverStatus.payload.guard.enabled);
@@ -328,6 +357,7 @@ function renderPanel() {
   renderStatus(analysis?.risk || 'Idle');
   renderSources(snapshot?.detectedSources || {});
   renderConfig(analysis);
+  renderRelocatorStatus();
   renderServerStatus();
   renderDiff(analysis?.prefixDiff);
   renderReasons(analysis?.reasons || []);
@@ -353,6 +383,30 @@ function renderSources(sources) {
   for (const [name, data] of entries) {
     container.appendChild(chip(`${name} x${data.count}`, data.severity === 'high' ? 'bad' : 'warn'));
   }
+}
+
+function renderRelocatorStatus() {
+  const node = document.getElementById('ccl_relocator_status');
+  if (!node) return;
+  const status = latestState.relocation;
+  if (!status) {
+    node.textContent = 'Prompt relocator: waiting.';
+    return;
+  }
+  if (!status.enabled) {
+    node.textContent = 'Prompt relocator: off.';
+    return;
+  }
+  if (!status.available) {
+    node.textContent = `Prompt relocator: unavailable${status.reason ? ` (${status.reason})` : ''}.`;
+    return;
+  }
+  const moved = status.moved || 0;
+  const watched = status.watched || 0;
+  const labels = Array.isArray(status.items) && status.items.length
+    ? `；moved=${status.items.slice(0, 3).map((item) => item.key).join(',')}`
+    : '';
+  node.textContent = `Prompt relocator: watched ${watched}, moved ${moved}${labels}.`;
 }
 
 function renderDiff(diff) {
@@ -861,6 +915,111 @@ async function loadContextModule() {
   } catch (error) {
     console.warn('[Claude Cache Lens] Falling back to global SillyTavern context:', error);
   }
+}
+
+async function loadPromptApiModule() {
+  if (promptApiImportAttempted) {
+    return;
+  }
+  promptApiImportAttempted = true;
+  for (const modulePath of ['../../../../script.js', '../../../script.js', '../../script.js', '/script.js']) {
+    try {
+      const module = await import(modulePath);
+      if (module?.extension_prompts && module?.extension_prompt_types) {
+        importedPromptApi = module;
+        return;
+      }
+    } catch {
+      // Try the next SillyTavern path shape.
+    }
+  }
+}
+
+function relocatePromptInjections(context, settings) {
+  if (!settings.promptRelocatorEnabled) {
+    return { enabled: false };
+  }
+
+  const promptApi = getPromptApi(context);
+  if (!promptApi?.prompts || !promptApi.types) {
+    return { enabled: true, available: false, reason: 'prompt_api_missing' };
+  }
+
+  const history = readJson(RELOCATOR_KEY) || {};
+  const nextHistory = {};
+  const items = [];
+  let watched = 0;
+  let moved = 0;
+  const depth = Number.isInteger(settings.promptRelocatorDepth) ? settings.promptRelocatorDepth : 2;
+
+  for (const [key, prompt] of Object.entries(promptApi.prompts)) {
+    if (!isRelocatorCandidate(key, prompt, promptApi)) {
+      continue;
+    }
+    watched += 1;
+    const value = String(prompt.value || '');
+    const hash = hashString(value);
+    const previous = history[key];
+    const changed = Boolean(previous?.hash && previous.hash !== hash);
+    const riskyKey = RELOCATOR_RISK_KEY_PATTERN.test(key);
+    const broadMode = settings.systemPromptCacheOverride === false && value.length > 200;
+    const shouldMove = riskyKey || changed || broadMode;
+
+    nextHistory[key] = {
+      hash,
+      chars: value.length,
+      changed,
+      seenAt: new Date().toISOString(),
+    };
+
+    if (!shouldMove) {
+      continue;
+    }
+
+    prompt.position = promptApi.types.IN_CHAT;
+    prompt.depth = depth;
+    prompt.role = promptApi.roles?.SYSTEM ?? prompt.role ?? 0;
+    moved += 1;
+    items.push({
+      key,
+      reason: riskyKey ? 'risky_key' : changed ? 'changed' : 'system_cache_off',
+      chars: value.length,
+      hash,
+      depth,
+    });
+  }
+
+  writeJson(RELOCATOR_KEY, { ...history, ...nextHistory });
+  return { enabled: true, available: true, watched, moved, items };
+}
+
+function getPromptApi(context) {
+  const prompts = context?.extensionPrompts || importedPromptApi?.extension_prompts || null;
+  const types = importedPromptApi?.extension_prompt_types || {
+    IN_PROMPT: 0,
+    IN_CHAT: 1,
+  };
+  const roles = importedPromptApi?.extension_prompt_roles || {
+    SYSTEM: 0,
+  };
+  return prompts ? { prompts, types, roles } : null;
+}
+
+function isRelocatorCandidate(key, prompt, promptApi) {
+  if (!prompt || typeof prompt !== 'object') {
+    return false;
+  }
+  const value = String(prompt.value || '').trim();
+  if (!value) {
+    return false;
+  }
+  if (RELOCATOR_SKIP_KEY_PATTERN.test(key)) {
+    return false;
+  }
+  const isSystemPrompt = Number(prompt.position) === Number(promptApi.types.IN_PROMPT)
+    && Number(prompt.depth || 0) === 0
+    && Number(prompt.role ?? promptApi.roles?.SYSTEM ?? 0) === Number(promptApi.roles?.SYSTEM ?? 0);
+  return isSystemPrompt;
 }
 
 function readJson(key) {
