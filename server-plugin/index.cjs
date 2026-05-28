@@ -6,7 +6,7 @@ const https = require('node:https');
 const path = require('node:path');
 
 const MAX_ITEMS = 100;
-const PLUGIN_VERSION = '0.1.20';
+const PLUGIN_VERSION = '0.1.21';
 const SERVER_PLUGIN_PACKAGE_NAME = 'claude-cache-lens-server-plugin';
 const STATE_DIR = path.resolve(__dirname, '.claude-cache-lens');
 const PREFIX_HISTORY_PATH = path.join(STATE_DIR, 'prefix-history.json');
@@ -503,6 +503,9 @@ function getClaudePrefixComparison(patchResult, requestInfo, now = new Date().to
     && prefixHash
     && patchResult.estimatedPromptTokens >= patchResult.minimumCacheTokens
   );
+  const prefixDiff = prefixMismatch
+    ? comparePrefixSegments(previous?.cachePrefixSegments || [], patchResult.cachePrefixSegments || [])
+    : null;
 
   return {
     target,
@@ -514,6 +517,45 @@ function getClaudePrefixComparison(patchResult, requestInfo, now = new Date().to
     prefixMismatch,
     prefixExpired,
     missingPreviousPrefix,
+    prefixDiff,
+  };
+}
+
+function comparePrefixSegments(previousSegments, currentSegments) {
+  const maxLength = Math.max(previousSegments.length, currentSegments.length);
+  for (let index = 0; index < maxLength; index += 1) {
+    const previous = previousSegments[index] || null;
+    const current = currentSegments[index] || null;
+    if (!previous || !current) {
+      return {
+        index,
+        reason: previous ? 'removed' : 'added',
+        previous: summarizeSegmentFingerprint(previous),
+        current: summarizeSegmentFingerprint(current),
+      };
+    }
+    if (previous.hash !== current.hash) {
+      return {
+        index,
+        reason: 'changed',
+        previous: summarizeSegmentFingerprint(previous),
+        current: summarizeSegmentFingerprint(current),
+      };
+    }
+  }
+  return null;
+}
+
+function summarizeSegmentFingerprint(segment) {
+  if (!segment) {
+    return null;
+  }
+  return {
+    source: segment.source || null,
+    role: segment.role || null,
+    chars: segment.chars ?? null,
+    tokens: segment.tokens ?? null,
+    hasCacheControl: Boolean(segment.hasCacheControl),
   };
 }
 
@@ -535,6 +577,7 @@ function recordClaudeAttempt(patchResult, requestInfo, now, outcome) {
     minimumCacheTokens: patchResult.minimumCacheTokens ?? null,
     belowMinimum: patchResult.belowMinimum ?? null,
     cachePrefixHash: prefixHash,
+    cachePrefixSegments: patchResult.cachePrefixSegments || [],
     matchedPreviousPrefix: comparison.matchedPreviousPrefix,
     previousAt: comparison.previousAt || null,
     previousPrefixTokens: comparison.previousPrefixTokens ?? null,
@@ -544,6 +587,7 @@ function recordClaudeAttempt(patchResult, requestInfo, now, outcome) {
     missingPreviousPrefix: comparison.missingPreviousPrefix,
     usedBaselineWriteAllowance: patchResult.usedBaselineWriteAllowance || false,
     guardReason: patchResult.guardReason || null,
+    prefixDiff: comparison.prefixDiff || null,
     autoBreakpoint: patchResult.autoBreakpoint || null,
   };
 
@@ -552,6 +596,7 @@ function recordClaudeAttempt(patchResult, requestInfo, now, outcome) {
       at: now,
       cachePrefixHash: prefixHash,
       cachePrefixTokens: patchResult.estimatedPromptTokens ?? null,
+      cachePrefixSegments: patchResult.cachePrefixSegments || [],
     });
     savePrefixHistory();
   }
@@ -571,6 +616,7 @@ function loadPrefixHistory() {
           at: value.at || null,
           cachePrefixHash: String(value.cachePrefixHash),
           cachePrefixTokens: value.cachePrefixTokens ?? null,
+          cachePrefixSegments: Array.isArray(value.cachePrefixSegments) ? value.cachePrefixSegments : [],
         });
       }
     }
@@ -622,6 +668,7 @@ function patchClaudeCacheRequestBuffer(buffer, requestInfo) {
       minimumCacheTokens: result.minimumCacheTokens,
       belowMinimum: result.belowMinimum,
       cachePrefixHash: result.cachePrefixHash,
+      cachePrefixSegments: result.cachePrefixSegments,
       cacheTtl: result.cacheTtl,
       autoBreakpoint: result.autoBreakpoint,
       reason: result.reason,
@@ -639,6 +686,7 @@ function patchClaudeCacheRequestBuffer(buffer, requestInfo) {
     minimumCacheTokens: result.minimumCacheTokens,
     belowMinimum: result.belowMinimum,
     cachePrefixHash: result.cachePrefixHash,
+    cachePrefixSegments: result.cachePrefixSegments,
     cacheTtl: result.cacheTtl,
     autoBreakpoint: result.autoBreakpoint,
     userId: result.userId,
@@ -704,6 +752,7 @@ function patchClaudeCacheRequestBody(body, options = {}) {
     minimumCacheTokens,
     belowMinimum,
     cachePrefixHash: cachePrefixInfo.hash,
+    cachePrefixSegments: cachePrefixInfo.segments,
     cacheTtl: ttl,
     autoBreakpoint,
     cacheReady: !changed && isCacheReady(body),
@@ -760,8 +809,9 @@ function getCacheControlledPrefixInfo(body) {
   const segments = collectPromptSegments(body);
 
   let prefix = '';
-  let result = { tokens: 0, hash: null };
-  for (const segment of segments) {
+  let result = { tokens: 0, hash: null, segments: [] };
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
     prefix = prefix ? `${prefix}\n\n${segment.text}` : segment.text;
     if (segment.hasCacheControl) {
       const tokens = estimateTokens(prefix);
@@ -769,11 +819,24 @@ function getCacheControlledPrefixInfo(body) {
         result = {
           tokens,
           hash: hashString(prefix),
+          segments: buildSegmentFingerprints(segments.slice(0, index + 1)),
         };
       }
     }
   }
   return result;
+}
+
+function buildSegmentFingerprints(segments) {
+  return segments.map((segment, index) => ({
+    index,
+    source: segment.source || `segment:${index}`,
+    role: segment.role || null,
+    chars: String(segment.text ?? '').length,
+    tokens: estimateTokens(segment.text),
+    hash: hashString(segment.text),
+    hasCacheControl: Boolean(segment.hasCacheControl),
+  }));
 }
 
 function hashString(value) {
@@ -815,16 +878,20 @@ function ensureAutomaticCacheControlAtMinimum(body, minimumTokens, cacheControl)
 
 function collectPromptSegments(body, cacheControl = null) {
   const segments = [];
-  appendPromptSegments(segments, body?.tools, false, false, cacheControl);
-  appendPromptSegments(segments, body?.system, false, false, cacheControl);
+  appendPromptSegments(segments, body?.tools, false, false, cacheControl, 'tools', null);
+  appendPromptSegments(segments, body?.system, false, false, cacheControl, 'system', 'system');
   if (Array.isArray(body?.messages)) {
     const currentInputIndex = findCurrentInputIndex(body.messages);
     body.messages.forEach((message, index) => {
       const inherited = Boolean(message?.cache_control || message?.content?.cache_control);
       const isCurrentOrAfterInput = currentInputIndex >= 0 && index >= currentInputIndex;
+      const role = message?.role || 'unknown';
+      const source = `message:${index}:${role}`;
       if (typeof message?.content === 'string') {
         segments.push({
           text: message.content,
+          source,
+          role,
           hasCacheControl: inherited,
           canSetCacheControl: Boolean(cacheControl),
           isCurrentOrAfterInput,
@@ -834,7 +901,7 @@ function collectPromptSegments(body, cacheControl = null) {
         });
         return;
       }
-      appendPromptSegments(segments, message?.content, inherited, isCurrentOrAfterInput, cacheControl);
+      appendPromptSegments(segments, message?.content, inherited, isCurrentOrAfterInput, cacheControl, source, role);
     });
   }
   return segments;
@@ -849,13 +916,23 @@ function findCurrentInputIndex(messages) {
   return -1;
 }
 
-function appendPromptSegments(segments, value, inheritedCacheControl = false, isCurrentOrAfterInput = false, cacheControl = null) {
+function appendPromptSegments(
+  segments,
+  value,
+  inheritedCacheControl = false,
+  isCurrentOrAfterInput = false,
+  cacheControl = null,
+  source = 'unknown',
+  role = null
+) {
   if (value == null) {
     return;
   }
   if (typeof value === 'string') {
     segments.push({
       text: value,
+      source,
+      role,
       hasCacheControl: inheritedCacheControl,
       canSetCacheControl: false,
       isCurrentOrAfterInput,
@@ -864,8 +941,16 @@ function appendPromptSegments(segments, value, inheritedCacheControl = false, is
     return;
   }
   if (Array.isArray(value)) {
-    for (const item of value) {
-      appendPromptSegments(segments, item, inheritedCacheControl, isCurrentOrAfterInput, cacheControl);
+    for (let index = 0; index < value.length; index += 1) {
+      appendPromptSegments(
+        segments,
+        value[index],
+        inheritedCacheControl,
+        isCurrentOrAfterInput,
+        cacheControl,
+        `${source}[${index}]`,
+        role
+      );
     }
     return;
   }
@@ -874,6 +959,8 @@ function appendPromptSegments(segments, value, inheritedCacheControl = false, is
     if (typeof value.text === 'string') {
       segments.push({
         text: value.text,
+        source,
+        role,
         hasCacheControl,
         canSetCacheControl: Boolean(cacheControl) && isCacheableContentPart(value),
         isCurrentOrAfterInput,
@@ -888,6 +975,8 @@ function appendPromptSegments(segments, value, inheritedCacheControl = false, is
     if (typeof value.content === 'string') {
       segments.push({
         text: value.content,
+        source,
+        role,
         hasCacheControl,
         canSetCacheControl: Boolean(cacheControl) && isCacheableContentPart(value),
         isCurrentOrAfterInput,
@@ -900,11 +989,13 @@ function appendPromptSegments(segments, value, inheritedCacheControl = false, is
       return;
     }
     if (Array.isArray(value.content)) {
-      appendPromptSegments(segments, value.content, hasCacheControl, isCurrentOrAfterInput, cacheControl);
+      appendPromptSegments(segments, value.content, hasCacheControl, isCurrentOrAfterInput, cacheControl, `${source}.content`, role);
       return;
     }
     segments.push({
       text: JSON.stringify(value),
+      source,
+      role,
       hasCacheControl,
       canSetCacheControl: Boolean(cacheControl) && isCacheableContentPart(value),
       isCurrentOrAfterInput,
@@ -1229,6 +1320,7 @@ module.exports = {
   _private: {
     buildClaudeBlock,
     compareVersions,
+    comparePrefixSegments,
     copyServerPluginFiles,
     getCacheControlledPrefixInfo,
     estimateCacheControlledPrefixTokens,

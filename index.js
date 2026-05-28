@@ -607,11 +607,14 @@ function renderServerStatus() {
     const lastClaude = payload.lastClaude
       ? `；Claude前缀${payload.lastClaude.matchedPreviousPrefix ? '稳定' : payload.lastClaude.missingPreviousPrefix ? '无基准' : '变化'}${payload.lastClaude.previousAt ? '' : '(首条)'}`
       : '';
+    const prefixDiff = payload.lastClaude?.prefixDiff
+      ? `；首变=${payload.lastClaude.prefixDiff.current?.source || payload.lastClaude.prefixDiff.previous?.source || payload.lastClaude.prefixDiff.reason}`
+      : '';
     const skipped = payload.skippedRequests || 0;
     const skipHint = skipped
       ? `；最近跳过=${payload.lastSkippedReason || 'unknown'}${payload.lastSkippedModel ? ` (${payload.lastSkippedModel})` : ''}`
       : '';
-    node.textContent = `Server plugin${version} 已加载；已补丁 ${payload.patchedRequests || 0} 次；已自带缓存 ${payload.cacheReadyRequests || 0} 次；跳过 ${skipped} 次${skipHint}${threshold}${auto}${guard}${lastClaude}${update}；user_id=${payload.userId || '-'}`;
+    node.textContent = `Server plugin${version} 已加载；已补丁 ${payload.patchedRequests || 0} 次；已自带缓存 ${payload.cacheReadyRequests || 0} 次；跳过 ${skipped} 次${skipHint}${threshold}${auto}${guard}${lastClaude}${prefixDiff}${update}；user_id=${payload.userId || '-'}`;
     return;
   }
 

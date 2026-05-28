@@ -193,6 +193,24 @@ test('cache prefix hash changes when the stable prefix changes', () => {
   assert.notEqual(firstResult.cachePrefixHash, secondResult.cachePrefixHash);
 });
 
+test('reports the first changed cache prefix segment without prompt text', () => {
+  const previous = [
+    { source: 'system', role: 'system', chars: 12, tokens: 3, hash: 'same', hasCacheControl: false },
+    { source: 'message:0:user', role: 'user', chars: 40, tokens: 10, hash: 'old', hasCacheControl: true },
+  ];
+  const current = [
+    { source: 'system', role: 'system', chars: 12, tokens: 3, hash: 'same', hasCacheControl: false },
+    { source: 'message:0:user', role: 'user', chars: 44, tokens: 11, hash: 'new', hasCacheControl: true },
+  ];
+
+  const diff = _private.comparePrefixSegments(previous, current);
+
+  assert.equal(diff.index, 1);
+  assert.equal(diff.reason, 'changed');
+  assert.equal(diff.current.source, 'message:0:user');
+  assert.equal(Object.hasOwn(diff.current, 'text'), false);
+});
+
 test('does not use the current user input as an automatic breakpoint before assistant prefill', () => {
   const body = {
     model: 'claude-opus-4-7',
@@ -309,9 +327,9 @@ test('guard blocks missing Claude cache baseline by default', () => {
 });
 
 test('compares semantic versions for server plugin self update', () => {
-  assert.equal(_private.compareVersions('0.1.20', '0.1.19'), 1);
-  assert.equal(_private.compareVersions('0.1.20', '0.1.20'), 0);
-  assert.equal(_private.compareVersions('0.1.9', '0.1.20'), -1);
+  assert.equal(_private.compareVersions('0.1.21', '0.1.20'), 1);
+  assert.equal(_private.compareVersions('0.1.21', '0.1.21'), 0);
+  assert.equal(_private.compareVersions('0.1.9', '0.1.21'), -1);
 });
 
 test('copies only server plugin entry files during self update', () => {

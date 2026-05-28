@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.21
+
+- Record hashed segment fingerprints for the real Claude cache prefix.
+- Show the first changed prefix segment when Guard blocks a prefix mismatch, without storing prompt text.
+
 ## 0.1.20
 
 - Guard Strict mode now blocks the first Claude cache write unless the user explicitly allows one baseline write.
