@@ -166,14 +166,6 @@ function mountPanel() {
         <div class="ccl-section-title">Reasons</div>
         <ul id="ccl_reasons" class="ccl-list"></ul>
       </div>
-
-      <div class="ccl-gateway-row">
-        <input id="ccl_gateway_url" class="text_pole" type="url" placeholder="http://127.0.0.1:8787">
-        <button id="ccl_gateway_ping" class="menu_button" type="button" title="Read gateway usage">
-          <i class="fa-solid fa-signal"></i>
-        </button>
-      </div>
-      <div id="ccl_gateway_summary" class="ccl-note"></div>
     </div>
   `;
   target.appendChild(wrapper);

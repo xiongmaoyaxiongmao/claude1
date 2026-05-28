@@ -77,3 +77,25 @@ test('dynamic macro in stable prefix breaks history caching recommendation', () 
   assert.equal(analysis.risk, 'Broken');
   assert.equal(analysis.recommendations.cachingAtDepth, -1);
 });
+
+test('recognizes OpenAI-compatible custom Claude models', () => {
+  const snapshot = createSnapshot({
+    contextSize: 4096,
+    context: {
+      mainApi: 'openai',
+      oai_settings: {
+        chat_completion_source: 'custom',
+        custom_model: 'claude-opus-4-7',
+        custom_url: 'https://example.com/v1',
+      },
+    },
+    chat: [
+      { role: 'system', content: 'Stable system prompt '.repeat(80) },
+      { role: 'user', content: 'hello' },
+    ],
+  });
+
+  const analysis = analyzeSnapshot(snapshot, null);
+  assert.equal(analysis.apiMode, 'claude_compatible');
+  assert.equal(analysis.reasons.some((reason) => reason.includes('不像 Claude')), false);
+});

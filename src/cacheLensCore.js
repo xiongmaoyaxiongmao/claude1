@@ -149,7 +149,8 @@ export function analyzeSnapshot(snapshot, previousSnapshot = null) {
   const hasDynamicMacro = Boolean(snapshot.detectedSources['Dynamic Macro']);
   const hasCurrentInputOnly = sourceNames.every((source) => source === 'Current Input');
   const isShortPrompt = (snapshot.estimatedContextTokens || 0) > 0 && snapshot.estimatedContextTokens < 1024;
-  const claudeLike = isClaudeLike(snapshot.api);
+  const apiMode = classifyApi(snapshot.api);
+  const claudeLike = apiMode !== 'unknown';
 
   const recommendedDepth = decideDepth({
     stableDepth,
@@ -163,6 +164,8 @@ export function analyzeSnapshot(snapshot, previousSnapshot = null) {
   const reasons = [];
   if (!claudeLike) {
     reasons.push('当前 API 信息不像 Claude/Anthropic；只能做结构诊断。');
+  } else if (apiMode === 'claude_compatible') {
+    reasons.push('当前像是 OpenAI-compatible 的 Claude 模型；结构诊断可用，真实缓存取决于中转是否支持 Claude prompt cache。');
   }
   if (isShortPrompt) {
     reasons.push('估算上下文低于 1024 tokens，供应商侧缓存可能不会生效。');
@@ -197,6 +200,7 @@ export function analyzeSnapshot(snapshot, previousSnapshot = null) {
     depthMatches,
     prefixDiff,
     reasons,
+    apiMode,
     recommendations: {
       enableSystemPromptCache: true,
       cachingAtDepth: recommendedDepth,
@@ -299,11 +303,35 @@ function collectMetadataText(context) {
 }
 
 function getApiMetadata(context) {
+  const oai = context?.oai_settings || {};
+  const chatSettings = context?.chatCompletionSettings || {};
+  const settings = context?.settings || {};
+  const modelCandidates = [
+    context?.chatCompletionModel,
+    context?.model,
+    context?.selectedModel,
+    context?.modelId,
+    context?.customModel,
+    context?.custom_model,
+    oai.model,
+    oai.custom_model,
+    oai.chat_completion_model,
+    oai.openai_model,
+    oai.reverse_proxy_model,
+    chatSettings.model,
+    chatSettings.custom_model,
+    chatSettings.chat_completion_model,
+    settings.model,
+    settings.custom_model,
+  ].map(stringValue).filter(Boolean);
+
   return {
-    mainApi: stringValue(context?.mainApi || context?.main_api || context?.settings?.main_api),
-    source: stringValue(context?.chatCompletionSource || context?.chat_completion_source || context?.oai_settings?.chat_completion_source),
-    model: stringValue(context?.chatCompletionModel || context?.model || context?.oai_settings?.model || context?.settings?.model),
-    preset: stringValue(context?.preset?.name || context?.presetName || context?.settings?.preset),
+    mainApi: stringValue(context?.mainApi || context?.main_api || settings.main_api),
+    source: stringValue(context?.chatCompletionSource || context?.chat_completion_source || oai.chat_completion_source || chatSettings.source),
+    model: modelCandidates[0] || '',
+    modelCandidates,
+    endpoint: stringValue(oai.custom_url || oai.reverse_proxy || chatSettings.custom_url || context?.custom_url),
+    preset: stringValue(context?.preset?.name || context?.presetName || settings.preset),
   };
 }
 
@@ -418,12 +446,24 @@ function diffSnapshots(snapshot, previousSnapshot) {
   };
 }
 
-function isClaudeLike(api) {
-  const text = `${api?.mainApi ?? ''} ${api?.source ?? ''} ${api?.model ?? ''}`.toLowerCase();
+function classifyApi(api) {
+  const text = [
+    api?.mainApi,
+    api?.source,
+    api?.model,
+    api?.endpoint,
+    ...(api?.modelCandidates || []),
+  ].join(' ').toLowerCase();
   if (!text.trim()) {
-    return true;
+    return 'unknown';
   }
-  return /claude|anthropic/.test(text);
+  if (/anthropic/.test(text)) {
+    return 'anthropic_native';
+  }
+  if (/claude/.test(text)) {
+    return 'claude_compatible';
+  }
+  return 'unknown';
 }
 
 function sumUsage(items, key) {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- Treat OpenAI-compatible custom endpoints as Claude-compatible when the selected model name contains `claude`.
+- Remove the optional gateway field from the default panel to keep the extension focused on SillyTavern cache diagnosis.
+
 ## 0.1.1
 
 - Mount the settings panel before SillyTavern context is available, then bind events when context appears.
