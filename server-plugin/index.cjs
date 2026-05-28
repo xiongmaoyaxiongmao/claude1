@@ -6,7 +6,7 @@ const https = require('node:https');
 const path = require('node:path');
 
 const MAX_ITEMS = 100;
-const PLUGIN_VERSION = '0.1.21';
+const PLUGIN_VERSION = '0.1.22';
 const SERVER_PLUGIN_PACKAGE_NAME = 'claude-cache-lens-server-plugin';
 const STATE_DIR = path.resolve(__dirname, '.claude-cache-lens');
 const PREFIX_HISTORY_PATH = path.join(STATE_DIR, 'prefix-history.json');
@@ -381,7 +381,7 @@ function makePatchedRequest(protocol, original) {
         process.nextTick(() => req.destroy(error));
         return req;
       }
-      if (patchResult.missingPreviousPrefix && guardState.allowBaselineWriteOnce) {
+      if (shouldConsumeBaselineWriteAllowance(patchResult)) {
         patchResult.usedBaselineWriteAllowance = true;
         guardState.allowBaselineWriteOnce = false;
       }
@@ -428,6 +428,9 @@ function getGuardBlockReason(patchResult) {
   if (patchResult.belowMinimum === true) {
     return patchResult.autoBreakpoint?.reason || 'below_minimum';
   }
+  if (guardState.allowBaselineWriteOnce && isBaselineReplacementRequest(patchResult)) {
+    return null;
+  }
   if (patchResult.prefixExpired === true) {
     return 'prefix_expired';
   }
@@ -442,6 +445,23 @@ function getGuardBlockReason(patchResult) {
     return 'missing_baseline';
   }
   return null;
+}
+
+function isBaselineReplacementRequest(patchResult) {
+  return Boolean(
+    patchResult?.missingPreviousPrefix
+    || patchResult?.prefixExpired
+    || patchResult?.prefixMismatch
+  );
+}
+
+function shouldConsumeBaselineWriteAllowance(patchResult) {
+  return Boolean(
+    guardState.allowBaselineWriteOnce
+    && patchResult?.minimumCacheTokens
+    && patchResult.belowMinimum !== true
+    && isBaselineReplacementRequest(patchResult)
+  );
 }
 
 function buildGuardErrorMessage(patchResult) {
@@ -1322,7 +1342,9 @@ module.exports = {
     compareVersions,
     comparePrefixSegments,
     copyServerPluginFiles,
+    guardState,
     getCacheControlledPrefixInfo,
+    getGuardBlockReason,
     estimateCacheControlledPrefixTokens,
     estimatePromptTokens,
     getCacheMinimumTokens,

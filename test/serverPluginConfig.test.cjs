@@ -326,10 +326,39 @@ test('guard blocks missing Claude cache baseline by default', () => {
   }), true);
 });
 
+test('one-shot baseline write allowance bypasses prefix replacement blocks', () => {
+  const original = _private.guardState.allowBaselineWriteOnce;
+  try {
+    _private.guardState.allowBaselineWriteOnce = true;
+    assert.equal(_private.getGuardBlockReason({
+      minimumCacheTokens: 4096,
+      belowMinimum: false,
+      prefixExpired: true,
+    }), null);
+    assert.equal(_private.getGuardBlockReason({
+      minimumCacheTokens: 4096,
+      belowMinimum: false,
+      prefixMismatch: true,
+    }), null);
+    assert.equal(_private.getGuardBlockReason({
+      minimumCacheTokens: 4096,
+      belowMinimum: false,
+      missingPreviousPrefix: true,
+    }), null);
+    assert.equal(_private.getGuardBlockReason({
+      minimumCacheTokens: 4096,
+      belowMinimum: true,
+      prefixExpired: true,
+    }), 'below_minimum');
+  } finally {
+    _private.guardState.allowBaselineWriteOnce = original;
+  }
+});
+
 test('compares semantic versions for server plugin self update', () => {
-  assert.equal(_private.compareVersions('0.1.21', '0.1.20'), 1);
-  assert.equal(_private.compareVersions('0.1.21', '0.1.21'), 0);
-  assert.equal(_private.compareVersions('0.1.9', '0.1.21'), -1);
+  assert.equal(_private.compareVersions('0.1.22', '0.1.21'), 1);
+  assert.equal(_private.compareVersions('0.1.22', '0.1.22'), 0);
+  assert.equal(_private.compareVersions('0.1.9', '0.1.22'), -1);
 });
 
 test('copies only server plugin entry files during self update', () => {

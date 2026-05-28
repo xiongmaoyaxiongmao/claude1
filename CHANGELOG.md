@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.22
+
+- Fix one-shot baseline writes so the key button allows replacing an expired or changed cache baseline.
+- Keep the guard blocking below-minimum cache prefixes even when a baseline write is allowed.
+
 ## 0.1.21
 
 - Record hashed segment fingerprints for the real Claude cache prefix.
