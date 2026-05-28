@@ -14,8 +14,7 @@
   padding-block: 10px;
 }
 
-.ccl-toolbar,
-.ccl-gateway-row {
+.ccl-toolbar {
   display: flex;
   align-items: center;
   gap: 8px;

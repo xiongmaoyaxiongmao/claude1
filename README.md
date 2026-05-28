@@ -6,8 +6,7 @@ Claude Cache Lens is a SillyTavern third-party extension for prompt-cache diagno
 
 - `manifest.json`, `index.js`, `style.css`: the SillyTavern UI extension.
 - `src/cacheLensCore.js`: shared prompt snapshot and diagnosis logic.
-- `server-plugin/index.cjs`: optional SillyTavern server plugin for diagnostics and one-click `config.yaml` updates.
-- `gateway/server.js`: optional Claude API gateway for real usage token tracking.
+- `server-plugin/`: optional SillyTavern server plugin for diagnostics and one-click `config.yaml` updates.
 - `test/`: Node built-in tests for the analyzer.
 
 ## Install as a SillyTavern extension
@@ -63,35 +62,6 @@ Check whether it loaded:
 
 ```text
 GET http://127.0.0.1:8000/api/plugins/claude-cache-lens/config
-```
-
-## Optional Claude gateway
-
-Run:
-
-```bash
-cd sillytavern-claude-cache-lens
-ANTHROPIC_API_KEY=sk-ant-... npm run gateway
-```
-
-Then point a compatible client at:
-
-```text
-http://127.0.0.1:8787/v1/messages
-```
-
-Gateway environment variables:
-
-- `ANTHROPIC_API_KEY` or `CLAUDE_API_KEY`: required.
-- `CLAUDE_BASE_URL`: defaults to `https://api.anthropic.com`.
-- `CLAUDE_CACHE_LENS_PORT`: defaults to `8787`.
-- `CLAUDE_CACHE_AUTO_MODE`: defaults to `false`; set `true` to add top-level automatic Claude cache control.
-- `CLAUDE_CACHE_TTL`: set `1h` only when automatic mode is enabled and the extra write cost is intended.
-
-Usage stats are available at:
-
-```text
-GET http://127.0.0.1:8787/cache-lens/usage
 ```
 
 ## Test

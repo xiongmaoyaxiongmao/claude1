@@ -1,7 +1,7 @@
 {
   "name": "sillytavern-claude-cache-lens",
-  "version": "0.1.6",
-  "description": "SillyTavern extension and optional Claude gateway for prompt cache diagnostics.",
+  "version": "0.1.7",
+  "description": "SillyTavern extension and server plugin for Claude prompt cache diagnostics and config.",
   "type": "module",
   "private": true,
   "repository": {
@@ -9,8 +9,7 @@
     "url": "https://github.com/xiongmaoyaxiongmao/claude1.git"
   },
   "scripts": {
-    "test": "node --test",
-    "gateway": "node gateway/server.js"
+    "test": "node --test"
   },
   "engines": {
     "node": ">=20"

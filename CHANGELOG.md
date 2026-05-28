@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.7
+
+- Remove unused optional networking files and related settings so the repository is focused on SillyTavern extension plus server plugin only.
+
 ## 0.1.6
 
 - Add a server-plugin `index.js` wrapper so SillyTavern can load the plugin by default directory entrypoint as well as through `package.json`.
@@ -22,7 +26,7 @@
 ## 0.1.2
 
 - Treat OpenAI-compatible custom endpoints as Claude-compatible when the selected model name contains `claude`.
-- Remove the optional gateway field from the default panel to keep the extension focused on SillyTavern cache diagnosis.
+- Remove unrelated optional fields from the default panel to keep the extension focused on SillyTavern cache diagnosis.
 
 ## 0.1.1
 
@@ -34,5 +38,4 @@
 
 - Initial SillyTavern UI extension with observation-only prompt cache diagnostics.
 - Added optional SillyTavern server plugin for diagnostic snapshots.
-- Added optional Claude gateway for real usage token tracking.
 - Added analyzer tests and Git install documentation.

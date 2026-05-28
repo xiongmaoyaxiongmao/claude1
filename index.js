@@ -11,7 +11,6 @@ const HISTORY_KEY = `${MODULE_NAME}:history`;
 const defaultSettings = Object.freeze({
   enabled: true,
   sendSnapshotsToServerPlugin: true,
-  gatewayUrl: '',
   maxStoredSnapshots: 20,
 });
 
@@ -22,7 +21,6 @@ let contextImportAttempted = false;
 let latestState = {
   snapshot: null,
   analysis: null,
-  gatewaySummary: null,
 };
 
 globalThis.claudeCacheLensInterceptor = async function claudeCacheLensInterceptor(chat, contextSize, abort, type) {
@@ -197,22 +195,16 @@ function bindEvents(context) {
     settings.enabled = Boolean(event.target.checked);
     saveSettings();
   });
-  panel.querySelector('#ccl_gateway_url')?.addEventListener('change', (event) => {
-    const settings = getSettings();
-    settings.gatewayUrl = event.target.value.trim();
-    saveSettings();
-  });
   panel.querySelector('#ccl_refresh')?.addEventListener('click', () => renderPanel());
   panel.querySelector('#ccl_clear')?.addEventListener('click', () => {
     localStorage.removeItem(LAST_SNAPSHOT_KEY);
     localStorage.removeItem(HISTORY_KEY);
-    latestState = { snapshot: null, analysis: null, gatewaySummary: null };
+    latestState = { snapshot: null, analysis: null };
     renderPanel();
   });
   panel.querySelector('#ccl_copy_config')?.addEventListener('click', copyRecommendedConfig);
   panel.querySelector('#ccl_apply_config')?.addEventListener('click', applyRecommendedConfig);
   panel.querySelector('#ccl_export')?.addEventListener('click', exportDiagnostics);
-  panel.querySelector('#ccl_gateway_ping')?.addEventListener('click', readGatewayUsage);
 
   const events = context.event_types || {};
   const eventSource = context.eventSource;
@@ -231,9 +223,7 @@ function bindEvents(context) {
 function hydrateControls() {
   const settings = getSettings();
   const enabled = document.getElementById('ccl_enabled');
-  const gatewayUrl = document.getElementById('ccl_gateway_url');
   if (enabled) enabled.checked = Boolean(settings.enabled);
-  if (gatewayUrl) gatewayUrl.value = settings.gatewayUrl || '';
 }
 
 function renderPanel() {
@@ -252,7 +242,6 @@ function renderPanel() {
   renderConfig(analysis);
   renderDiff(analysis?.prefixDiff);
   renderReasons(analysis?.reasons || []);
-  renderGatewaySummary(latestState.gatewaySummary);
   hydrateControls();
 }
 
@@ -401,29 +390,6 @@ async function copyText(text) {
   textarea.select();
   document.execCommand('copy');
   textarea.remove();
-}
-
-function renderGatewaySummary(summary) {
-  const container = document.getElementById('ccl_gateway_summary');
-  if (!container) return;
-  if (!summary) {
-    container.textContent = '';
-    return;
-  }
-  container.textContent = `Gateway: read ${summary.cacheReadTokens || 0}, write ${summary.cacheCreationTokens || 0}, input ${summary.inputTokens || 0} tokens.`;
-}
-
-async function readGatewayUsage() {
-  const settings = getSettings();
-  if (!settings.gatewayUrl) {
-    latestState.gatewaySummary = { cacheReadTokens: 0, cacheCreationTokens: 0, inputTokens: 0 };
-    renderPanel();
-    return;
-  }
-  const response = await fetch(`${settings.gatewayUrl.replace(/\/$/, '')}/cache-lens/usage`);
-  const payload = await response.json();
-  latestState.gatewaySummary = payload.summary || payload;
-  renderPanel();
 }
 
 function exportDiagnostics() {
