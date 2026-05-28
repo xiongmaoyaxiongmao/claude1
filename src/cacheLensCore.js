@@ -1,5 +1,13 @@
 export const SNAPSHOT_VERSION = 1;
 export const DEPTH_CANDIDATES = [0, 1, 2, 4, 8];
+export const CACHE_MINIMUM_TOKENS = Object.freeze({
+  opus45Plus: 4096,
+  opus: 1024,
+  sonnet: 1024,
+  haiku45Plus: 4096,
+  haiku: 2048,
+  unknown: 1024,
+});
 
 const DYNAMIC_MACROS = new Set([
   'random',
@@ -26,6 +34,26 @@ const SOURCE_RULES = [
 export function estimateTokens(textOrChars) {
   const chars = typeof textOrChars === 'number' ? textOrChars : String(textOrChars ?? '').length;
   return Math.max(0, Math.ceil(chars / 4));
+}
+
+export function getModelFamily(model) {
+  const text = String(model || '').toLowerCase();
+  if (/\bhaiku\b|haiku/.test(text)) return 'haiku';
+  if (/\bsonnet\b|sonnet/.test(text)) return 'sonnet';
+  if (/\bopus\b|opus/.test(text)) return 'opus';
+  return 'unknown';
+}
+
+export function getCacheMinimumTokens(model) {
+  const text = String(model || '').toLowerCase();
+  if (/mythos|opus[-_. ]?4[-_. ]?[567]\b|opus[-_. ]?4\.[567]\b/.test(text)) {
+    return CACHE_MINIMUM_TOKENS.opus45Plus;
+  }
+  if (/haiku[-_. ]?4[-_. ]?5\b|haiku[-_. ]?4\.5\b/.test(text)) {
+    return CACHE_MINIMUM_TOKENS.haiku45Plus;
+  }
+  const family = getModelFamily(text);
+  return CACHE_MINIMUM_TOKENS[family] || CACHE_MINIMUM_TOKENS.unknown;
 }
 
 export function hashString(value) {
@@ -148,9 +176,14 @@ export function analyzeSnapshot(snapshot, previousSnapshot = null) {
   const sourceNames = Object.keys(snapshot.detectedSources);
   const hasDynamicMacro = Boolean(snapshot.detectedSources['Dynamic Macro']);
   const hasCurrentInputOnly = sourceNames.every((source) => source === 'Current Input');
-  const isShortPrompt = (snapshot.estimatedContextTokens || 0) > 0 && snapshot.estimatedContextTokens < 1024;
   const apiMode = classifyApi(snapshot.api);
   const claudeLike = apiMode !== 'unknown';
+  const modelForThreshold = snapshot.api?.model || snapshot.api?.modelCandidates?.[0] || '';
+  const modelFamily = getModelFamily(modelForThreshold);
+  const cacheMinimumTokens = getCacheMinimumTokens(modelForThreshold);
+  const isShortPrompt = claudeLike
+    && (snapshot.estimatedContextTokens || 0) > 0
+    && snapshot.estimatedContextTokens < cacheMinimumTokens;
 
   const recommendedDepth = decideDepth({
     stableDepth,
@@ -168,7 +201,7 @@ export function analyzeSnapshot(snapshot, previousSnapshot = null) {
     reasons.push('当前像是 OpenAI-compatible 的 Claude 模型；结构诊断可用，真实缓存取决于中转是否支持 Claude prompt cache。');
   }
   if (isShortPrompt) {
-    reasons.push('估算上下文低于 1024 tokens，供应商侧缓存可能不会生效。');
+    reasons.push(`估算上下文低于 ${cacheMinimumTokens} tokens（${modelFamily} 门槛），供应商侧缓存可能不会生效。`);
   }
   if (!previousSnapshot) {
     reasons.push('还没有上一轮快照，下一次请求后才能判断前缀是否稳定。');
@@ -201,6 +234,8 @@ export function analyzeSnapshot(snapshot, previousSnapshot = null) {
     prefixDiff,
     reasons,
     apiMode,
+    cacheMinimumTokens,
+    modelFamily,
     recommendations: {
       enableSystemPromptCache: true,
       cachingAtDepth: recommendedDepth,
@@ -460,7 +495,7 @@ function classifyApi(api) {
   if (/anthropic/.test(text)) {
     return 'anthropic_native';
   }
-  if (/claude/.test(text)) {
+  if (/(claude|opus|sonnet|haiku)/.test(text)) {
     return 'claude_compatible';
   }
   return 'unknown';

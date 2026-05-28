@@ -528,11 +528,14 @@ function renderServerStatus() {
     const update = payload.selfUpdate?.updateAvailable
       ? `；扩展内有新版 server plugin ${payload.selfUpdate.sourceVersion}，点插头按钮同步`
       : '';
+    const threshold = payload.lastMinimumCacheTokens
+      ? `；估算 ${payload.lastEstimatedPromptTokens || 0}/${payload.lastMinimumCacheTokens} tokens${payload.lastBelowMinimum ? '，低于缓存门槛' : ''}`
+      : '';
     const skipped = payload.skippedRequests || 0;
     const skipHint = skipped
       ? `；最近跳过=${payload.lastSkippedReason || 'unknown'}${payload.lastSkippedModel ? ` (${payload.lastSkippedModel})` : ''}`
       : '';
-    node.textContent = `Server plugin${version} 已加载；已补丁 ${payload.patchedRequests || 0} 次；已自带缓存 ${payload.cacheReadyRequests || 0} 次；跳过 ${skipped} 次${skipHint}${update}；user_id=${payload.userId || '-'}`;
+    node.textContent = `Server plugin${version} 已加载；已补丁 ${payload.patchedRequests || 0} 次；已自带缓存 ${payload.cacheReadyRequests || 0} 次；跳过 ${skipped} 次${skipHint}${threshold}${update}；user_id=${payload.userId || '-'}`;
     return;
   }
 

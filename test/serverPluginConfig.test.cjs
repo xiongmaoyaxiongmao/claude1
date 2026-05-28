@@ -62,8 +62,9 @@ test('patches Claude native request body with metadata and cache control', () =>
 
   assert.equal(result.changed, true);
   assert.deepEqual(body.metadata, { user_id: 'money' });
-  assert.deepEqual(body.cache_control, { type: 'ephemeral', ttl: '5m' });
+  assert.equal(body.cache_control, undefined);
   assert.deepEqual(body.system[0].cache_control, { type: 'ephemeral', ttl: '5m' });
+  assert.equal(result.minimumCacheTokens, 4096);
 });
 
 test('patches OpenAI-compatible Claude message content at selected depth', () => {
@@ -104,6 +105,8 @@ test('patches Claude-family aliases without the claude prefix', () => {
 
   assert.equal(result.changed, true);
   assert.equal(result.model, 'opus-4-7');
+  assert.equal(result.modelFamily, 'opus');
+  assert.equal(result.minimumCacheTokens, 4096);
   assert.equal(body.metadata.user_id, 'money');
   assert.equal(body.messages[0].content[0].cache_control.type, 'ephemeral');
 });
@@ -112,7 +115,6 @@ test('treats already cache-ready Claude bodies as ready, not skipped', () => {
   const body = {
     model: 'claude-opus-4-7',
     metadata: { user_id: 'money' },
-    cache_control: { type: 'ephemeral', ttl: '5m' },
     messages: [
       {
         role: 'system',
@@ -131,6 +133,27 @@ test('treats already cache-ready Claude bodies as ready, not skipped', () => {
   assert.equal(result.reason, 'already_cache_ready');
 });
 
+test('reports cache minimum threshold and prompt estimate', () => {
+  const body = {
+    model: 'claude-haiku-3-5',
+    system: 'short stable prompt',
+    messages: [{ role: 'user', content: 'hello' }],
+  };
+
+  const result = _private.patchClaudeCacheRequestBody(body, {
+    userId: 'money',
+    settings: { cachingAtDepth: -1, extendedTTL: false },
+  });
+
+  assert.equal(_private.getCacheMinimumTokens('claude-haiku-3-5'), 2048);
+  assert.equal(_private.getCacheMinimumTokens('claude-haiku-4-5'), 4096);
+  assert.equal(_private.getCacheMinimumTokens('claude-sonnet-4-6'), 1024);
+  assert.equal(result.modelFamily, 'haiku');
+  assert.equal(result.minimumCacheTokens, 2048);
+  assert.equal(result.belowMinimum, true);
+  assert.equal(result.estimatedPromptTokens > 0, true);
+});
+
 test('does not patch non-Claude chat completion bodies', () => {
   const body = {
     model: 'gpt-4.1',
@@ -147,9 +170,9 @@ test('does not patch non-Claude chat completion bodies', () => {
 });
 
 test('compares semantic versions for server plugin self update', () => {
-  assert.equal(_private.compareVersions('0.1.12', '0.1.11'), 1);
-  assert.equal(_private.compareVersions('0.1.12', '0.1.12'), 0);
-  assert.equal(_private.compareVersions('0.1.9', '0.1.12'), -1);
+  assert.equal(_private.compareVersions('0.1.13', '0.1.12'), 1);
+  assert.equal(_private.compareVersions('0.1.13', '0.1.13'), 0);
+  assert.equal(_private.compareVersions('0.1.9', '0.1.13'), -1);
 });
 
 test('copies only server plugin entry files during self update', () => {

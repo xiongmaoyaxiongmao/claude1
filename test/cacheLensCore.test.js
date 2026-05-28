@@ -6,6 +6,7 @@ import {
   analyzeTextForRisks,
   createSnapshot,
   hashString,
+  getCacheMinimumTokens,
 } from '../src/cacheLensCore.js';
 
 test('hashString is deterministic', () => {
@@ -98,4 +99,52 @@ test('recognizes OpenAI-compatible custom Claude models', () => {
   const analysis = analyzeSnapshot(snapshot, null);
   assert.equal(analysis.apiMode, 'claude_compatible');
   assert.equal(analysis.reasons.some((reason) => reason.includes('不像 Claude')), false);
+});
+
+test('recognizes Claude-family aliases and model-specific cache thresholds', () => {
+  const snapshot = createSnapshot({
+    contextSize: 1500,
+    context: {
+      mainApi: 'openai',
+      oai_settings: {
+        chat_completion_source: 'custom',
+        custom_model: 'opus-4-7',
+      },
+    },
+    chat: [
+      { role: 'system', content: 'Stable system prompt '.repeat(80) },
+      { role: 'user', content: 'hello' },
+    ],
+  });
+
+  const analysis = analyzeSnapshot(snapshot, null);
+  assert.equal(analysis.apiMode, 'claude_compatible');
+  assert.equal(analysis.modelFamily, 'opus');
+  assert.equal(analysis.cacheMinimumTokens, 4096);
+  assert.equal(analysis.reasons.some((reason) => reason.includes('不像 Claude')), false);
+});
+
+test('uses Haiku minimum cache threshold for short prompt warning', () => {
+  const snapshot = createSnapshot({
+    contextSize: 1500,
+    context: {
+      chatCompletionSource: 'Claude',
+      model: 'claude-haiku-3-5',
+    },
+    chat: [
+      { role: 'system', content: 'Stable system prompt '.repeat(80) },
+      { role: 'user', content: 'hello' },
+    ],
+  });
+
+  const analysis = analyzeSnapshot(snapshot, null);
+  assert.equal(getCacheMinimumTokens('claude-haiku-3-5'), 2048);
+  assert.equal(analysis.cacheMinimumTokens, 2048);
+  assert.equal(analysis.reasons.some((reason) => reason.includes('2048 tokens')), true);
+});
+
+test('uses current Opus 4.7 cache threshold', () => {
+  assert.equal(getCacheMinimumTokens('claude-opus-4-7'), 4096);
+  assert.equal(getCacheMinimumTokens('claude-opus-4.6'), 4096);
+  assert.equal(getCacheMinimumTokens('claude-opus-4-1'), 1024);
 });

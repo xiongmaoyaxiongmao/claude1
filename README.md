@@ -64,8 +64,8 @@ The config endpoint only updates the top-level `claude:` block in `config.yaml` 
 The server plugin also patches outgoing Claude requests in-process:
 
 - Adds top-level `metadata.user_id` with a stable default value.
-- Adds top-level `cache_control` for 5-minute or 1-hour cache TTL.
 - Adds compatible cache breakpoints to native Claude and OpenAI-compatible Claude request bodies.
+- Shows the estimated prompt tokens against the model-family cache minimum.
 - Leaves non-Claude models untouched.
 
 Check whether it loaded:
@@ -76,7 +76,7 @@ GET http://127.0.0.1:8000/api/plugins/claude-cache-lens/patcher
 
 If `/config` works but `/patcher` returns `Not found`, the running server plugin is older than `0.1.9`. Copy `server-plugin` into `SillyTavern/plugins/claude-cache-lens` again and fully restart SillyTavern.
 
-After server plugin `0.1.12` is installed once, future extension updates can sync the server plugin from the panel plug button. A full SillyTavern restart is still required after syncing because the server-side code is loaded at process start.
+After server plugin `0.1.12` or newer is installed once, future extension updates can sync the server plugin from the panel plug button. A full SillyTavern restart is still required after syncing because the server-side code is loaded at process start.
 
 ## Test
 
@@ -103,3 +103,4 @@ git push -u origin main
 - `claude.cachingAtDepth`: starts at `2` when the prior request prefix matches the current request with the last two messages excluded.
 - `claude.extendedTTL`: recommended only for large stable prefixes.
 - Dynamic macros, time/date content, summaries, vector retrieval, web search, and World Info inside the stable prefix are flagged as cache-miss risks.
+- Cache minimum diagnostics use Anthropic's current published thresholds: 4096 estimated tokens for Opus 4.5+ and Haiku 4.5, 2048 for Haiku 3.5, and 1024 for Sonnet 4.x / older Opus.

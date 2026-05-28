@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.13
+
+- Add current model-specific cache minimum diagnostics for Opus, Sonnet, and Haiku.
+- Show estimated prompt tokens versus the minimum cacheable threshold in server plugin status.
+- Stop adding a top-level `cache_control`; patch content blocks while keeping top-level `metadata.user_id`.
+
 ## 0.1.12
 
 - Add a server plugin self-update endpoint that copies the latest bundled `server-plugin` files from the installed extension.
