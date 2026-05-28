@@ -76,6 +76,28 @@
   font-size: 0.9em;
 }
 
+.ccl-config-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.ccl-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ccl-field select {
+  width: 100%;
+}
+
+.ccl-ttl-control {
+  min-height: 32px;
+  align-items: center;
+}
+
 .ccl-chips {
   display: flex;
   flex-wrap: wrap;
@@ -134,5 +156,9 @@
 @media (max-width: 720px) {
   .ccl-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ccl-config-controls {
+    grid-template-columns: 1fr;
   }
 }

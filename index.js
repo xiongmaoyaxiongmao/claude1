@@ -12,6 +12,8 @@ const defaultSettings = Object.freeze({
   enabled: true,
   sendSnapshotsToServerPlugin: true,
   maxStoredSnapshots: 20,
+  cachingAtDepthOverride: null,
+  extendedTTLOverride: null,
 });
 
 let initialized = false;
@@ -21,6 +23,7 @@ let contextImportAttempted = false;
 let latestState = {
   snapshot: null,
   analysis: null,
+  serverConfigLoaded: false,
 };
 
 globalThis.claudeCacheLensInterceptor = async function claudeCacheLensInterceptor(chat, contextSize, abort, type) {
@@ -95,6 +98,7 @@ async function init() {
   latestState.snapshot = readJson(LAST_SNAPSHOT_KEY);
   latestState.analysis = latestState.snapshot ? analyzeSnapshot(latestState.snapshot, null) : null;
   renderPanel();
+  loadServerConfig().catch(() => {});
 }
 
 function mountPanel() {
@@ -165,6 +169,21 @@ function mountPanel() {
             <i class="fa-solid fa-floppy-disk"></i>
           </button>
         </div>
+        <div class="ccl-config-controls">
+          <label class="ccl-field">
+            <span class="ccl-label">History Depth to Save</span>
+            <select id="ccl_depth_select" class="text_pole">
+              <option value="2">2 - balanced</option>
+              <option value="4">4 - safer</option>
+              <option value="8">8 - safest</option>
+              <option value="-1">-1 - system only</option>
+            </select>
+          </label>
+          <label class="checkbox_label ccl-ttl-control">
+            <input id="ccl_extended_ttl" type="checkbox">
+            <span>1h TTL</span>
+          </label>
+        </div>
         <pre id="ccl_config_text" class="ccl-config-text">Waiting for generation.</pre>
         <div id="ccl_config_hint" class="ccl-note">The plugin will generate the exact config.yaml snippet after the first request.</div>
       </div>
@@ -199,11 +218,23 @@ function bindEvents(context) {
   panel.querySelector('#ccl_clear')?.addEventListener('click', () => {
     localStorage.removeItem(LAST_SNAPSHOT_KEY);
     localStorage.removeItem(HISTORY_KEY);
-    latestState = { snapshot: null, analysis: null };
+    latestState = { snapshot: null, analysis: null, serverConfigLoaded: latestState.serverConfigLoaded };
     renderPanel();
   });
   panel.querySelector('#ccl_copy_config')?.addEventListener('click', copyRecommendedConfig);
   panel.querySelector('#ccl_apply_config')?.addEventListener('click', applyRecommendedConfig);
+  panel.querySelector('#ccl_depth_select')?.addEventListener('change', (event) => {
+    const settings = getSettings();
+    settings.cachingAtDepthOverride = Number(event.target.value);
+    saveSettings();
+    renderPanel();
+  });
+  panel.querySelector('#ccl_extended_ttl')?.addEventListener('change', (event) => {
+    const settings = getSettings();
+    settings.extendedTTLOverride = Boolean(event.target.checked);
+    saveSettings();
+    renderPanel();
+  });
   panel.querySelector('#ccl_export')?.addEventListener('click', exportDiagnostics);
 
   const events = context.event_types || {};
@@ -223,7 +254,16 @@ function bindEvents(context) {
 function hydrateControls() {
   const settings = getSettings();
   const enabled = document.getElementById('ccl_enabled');
+  const depthSelect = document.getElementById('ccl_depth_select');
+  const extendedTTL = document.getElementById('ccl_extended_ttl');
   if (enabled) enabled.checked = Boolean(settings.enabled);
+  if (depthSelect) {
+    const value = settings.cachingAtDepthOverride == null ? 2 : settings.cachingAtDepthOverride;
+    depthSelect.value = String(value);
+  }
+  if (extendedTTL) {
+    extendedTTL.checked = Boolean(settings.extendedTTLOverride);
+  }
 }
 
 function renderPanel() {
@@ -310,11 +350,11 @@ function renderConfig(analysis) {
     return;
   }
   if (analysis.apiMode === 'anthropic_native') {
-    hintNode.textContent = '当前是 Claude 通道。复制到 SillyTavern 根目录 config.yaml 后重启 ST。';
+    hintNode.textContent = '当前是 Claude 通道。选择 depth 后点保存图标写入 config.yaml，重启 ST 后生效。';
     return;
   }
   if (analysis.apiMode === 'claude_compatible') {
-    hintNode.textContent = '当前像 Claude-compatible 通道。复制配置可用于 ST 的 Claude 通道；真实缓存仍取决于中转支持。';
+    hintNode.textContent = '当前像 Claude-compatible 通道。选择 depth 后点保存图标写入 config.yaml；真实缓存仍取决于中转支持。';
     return;
   }
   hintNode.textContent = '浏览器扩展不能直接写服务端 config.yaml，只能生成配置片段。';
@@ -344,13 +384,49 @@ async function applyRecommendedConfig() {
       throw new Error(payload.error || `Server plugin returned ${response.status}`);
     }
     if (hintNode) {
-      hintNode.textContent = `已写入 ${payload.configPath}，已备份。重启 SillyTavern 后生效。`;
+      syncSettingsFromServerConfig(payload.current);
+      hintNode.textContent = '已写入 config.yaml，已备份。重启 SillyTavern 后生效。';
+      renderPanel();
     }
   } catch (error) {
     if (hintNode) {
       hintNode.textContent = `无法直接写入。请确认 server plugin 已安装且 enableServerPlugins=true。错误：${error.message || error}`;
     }
   }
+}
+
+async function loadServerConfig() {
+  if (latestState.serverConfigLoaded) {
+    return;
+  }
+  const response = await fetch('/api/plugins/claude-cache-lens/config', {
+    method: 'GET',
+    headers: getJsonHeaders(),
+  });
+  if (!response.ok) {
+    return;
+  }
+  const payload = await response.json().catch(() => null);
+  if (!payload?.ok) {
+    return;
+  }
+  latestState.serverConfigLoaded = true;
+  syncSettingsFromServerConfig(payload.current);
+  renderPanel();
+}
+
+function syncSettingsFromServerConfig(current) {
+  if (!current) {
+    return;
+  }
+  const settings = getSettings();
+  if (Number.isInteger(current.cachingAtDepth)) {
+    settings.cachingAtDepthOverride = current.cachingAtDepth;
+  }
+  if (typeof current.extendedTTL === 'boolean') {
+    settings.extendedTTLOverride = current.extendedTTL;
+  }
+  saveSettings();
 }
 
 function buildConfigSnippet(analysis) {
@@ -364,16 +440,18 @@ function buildConfigSnippet(analysis) {
 }
 
 function getRecommendedSettings(analysis) {
+  const settings = getSettings();
   const recommendations = analysis?.recommendations || {
     enableSystemPromptCache: true,
     cachingAtDepth: 2,
     extendedTTL: false,
   };
-  const depth = recommendations.cachingAtDepth == null ? 2 : recommendations.cachingAtDepth;
+  const depth = settings.cachingAtDepthOverride ?? recommendations.cachingAtDepth ?? 2;
+  const extendedTTL = settings.extendedTTLOverride ?? recommendations.extendedTTL ?? false;
   return {
     enableSystemPromptCache: Boolean(recommendations.enableSystemPromptCache),
     cachingAtDepth: depth,
-    extendedTTL: Boolean(recommendations.extendedTTL),
+    extendedTTL: Boolean(extendedTTL),
   };
 }
 

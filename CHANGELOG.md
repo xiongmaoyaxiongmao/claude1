@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.8
+
+- Add manual History Depth and 1h TTL controls so config can be saved without editing YAML by hand.
+- Read existing server config so the controls match the current `config.yaml` values when the server plugin is available.
+
 ## 0.1.7
 
 - Remove unused optional networking files and related settings so the repository is focused on SillyTavern extension plus server plugin only.

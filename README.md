@@ -74,7 +74,7 @@ npm test
 ## Publish to your Git repository
 
 ```bash
-cd /home/ubuntu/ai-memory/sillytavern-claude-cache-lens
+cd claude1
 git init
 git add .
 git commit -m "Initial Claude Cache Lens extension"
