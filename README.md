@@ -39,11 +39,17 @@ The v1 extension is observation-only. It does not mutate chat data, abort genera
 
 Copy `server-plugin` into `SillyTavern/plugins/claude-cache-lens`, then set this in SillyTavern `config.yaml`:
 
+```bash
+cd "/path/to/SillyTavern"
+mkdir -p plugins/claude-cache-lens
+cp -R data/default-user/extensions/claude1/server-plugin/* plugins/claude-cache-lens/
+```
+
 ```yaml
 enableServerPlugins: true
 ```
 
-Restart SillyTavern. The plugin exposes:
+Restart SillyTavern. The plugin folder must contain `package.json` and `index.cjs`; the package file tells SillyTavern to load `index.cjs`. The plugin exposes:
 
 - `GET /api/plugins/claude-cache-lens/diagnose`
 - `POST /api/plugins/claude-cache-lens/diagnose`
@@ -52,6 +58,12 @@ Restart SillyTavern. The plugin exposes:
 - `POST /api/plugins/claude-cache-lens/config`
 
 The config endpoint only updates the top-level `claude:` block in `config.yaml` and creates a backup before writing. Restart SillyTavern after applying the config.
+
+Check whether it loaded:
+
+```text
+GET http://127.0.0.1:8000/api/plugins/claude-cache-lens/config
+```
 
 ## Optional Claude gateway
 

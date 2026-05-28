@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5
+
+- Add `server-plugin/package.json` so SillyTavern directory plugin loading can discover the CommonJS `index.cjs` entrypoint.
+
 ## 0.1.4
 
 - Add server-plugin endpoints that can write the recommended Claude cache settings into `config.yaml` with an automatic backup.
