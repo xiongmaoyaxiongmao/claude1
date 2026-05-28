@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.26
+
+- Compare all Claude cache-control breakpoints, not only the deepest prefix.
+- Allow requests when an earlier cache breakpoint is stable and above the model minimum, so Claude can read the stable prefix and write the new deeper prefix.
+- Keep `/patcher` output smaller by omitting inner segment hash lists from the top-level segment snapshot.
+
 ## 0.1.25
 
 - Add a labeled `prefixSegmentReport` for every cache-prefix segment: stable, changed, added, or removed.

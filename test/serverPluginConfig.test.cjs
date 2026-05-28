@@ -279,6 +279,22 @@ test('builds a labeled prefix segment report', () => {
   assert.equal(Object.hasOwn(report[1].current, 'text'), false);
 });
 
+test('finds a stable earlier cache breakpoint when the deepest prefix changes', () => {
+  const previous = [
+    { source: 'system[0]', tokens: 5000, hash: 'stable-system' },
+    { source: 'message:8:user[0]', tokens: 9000, hash: 'old-deep' },
+  ];
+  const current = [
+    { source: 'system[0]', tokens: 5000, hash: 'stable-system' },
+    { source: 'message:10:user[0]', tokens: 9800, hash: 'new-deep' },
+  ];
+
+  const stable = _private.findStableCacheBreakpoint(previous, current, 4096);
+
+  assert.equal(stable.source, 'system[0]');
+  assert.equal(stable.tokens, 5000);
+});
+
 test('does not use the current user input as an automatic breakpoint before assistant prefill', () => {
   const body = {
     model: 'claude-opus-4-7',
@@ -424,9 +440,9 @@ test('one-shot baseline write allowance bypasses prefix replacement blocks', () 
 });
 
 test('compares semantic versions for server plugin self update', () => {
-  assert.equal(_private.compareVersions('0.1.25', '0.1.24'), 1);
-  assert.equal(_private.compareVersions('0.1.25', '0.1.25'), 0);
-  assert.equal(_private.compareVersions('0.1.9', '0.1.25'), -1);
+  assert.equal(_private.compareVersions('0.1.26', '0.1.25'), 1);
+  assert.equal(_private.compareVersions('0.1.26', '0.1.26'), 0);
+  assert.equal(_private.compareVersions('0.1.9', '0.1.26'), -1);
 });
 
 test('copies only server plugin entry files during self update', () => {

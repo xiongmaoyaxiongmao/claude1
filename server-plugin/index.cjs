@@ -6,7 +6,7 @@ const https = require('node:https');
 const path = require('node:path');
 
 const MAX_ITEMS = 100;
-const PLUGIN_VERSION = '0.1.25';
+const PLUGIN_VERSION = '0.1.26';
 const SERVER_PLUGIN_PACKAGE_NAME = 'claude-cache-lens-server-plugin';
 const STATE_DIR = path.resolve(__dirname, '.claude-cache-lens');
 const PREFIX_HISTORY_PATH = path.join(STATE_DIR, 'prefix-history.json');
@@ -497,6 +497,16 @@ function getClaudePrefixComparison(patchResult, requestInfo, now = new Date().to
   ].join('|'));
   const previous = claudePrefixHistory.get(key) || null;
   const prefixHash = patchResult.cachePrefixHash || null;
+  const currentBreakpoints = normalizeCacheBreakpoints(patchResult.cacheBreakpoints, {
+    hash: patchResult.cachePrefixHash,
+    tokens: patchResult.estimatedPromptTokens,
+    source: patchResult.cachePrefixSegments?.at(-1)?.source || null,
+  });
+  const previousBreakpoints = normalizeCacheBreakpoints(previous?.cacheBreakpoints, {
+    hash: previous?.cachePrefixHash,
+    tokens: previous?.cachePrefixTokens,
+    source: previous?.cachePrefixSegments?.at(-1)?.source || null,
+  });
   const ttlMs = patchResult.cacheTtl === '1h' ? 60 * 60 * 1000 : 5 * 60 * 1000;
   const previousAgeMs = previous?.at ? Date.parse(now) - Date.parse(previous.at) : null;
   const prefixExpired = Boolean(
@@ -504,20 +514,25 @@ function getClaudePrefixComparison(patchResult, requestInfo, now = new Date().to
     && Number.isFinite(previousAgeMs)
     && previousAgeMs > ttlMs
   );
-  const matchedPreviousPrefix = Boolean(
+  const fullPrefixMatched = Boolean(
     previous
     && prefixHash
     && previous.cachePrefixHash === prefixHash
     && patchResult.estimatedPromptTokens >= patchResult.minimumCacheTokens
     && !prefixExpired
   );
-  const prefixMismatch = Boolean(
+  const stableCacheBreakpoint = !prefixExpired
+    ? findStableCacheBreakpoint(previousBreakpoints, currentBreakpoints, patchResult.minimumCacheTokens)
+    : null;
+  const matchedPreviousPrefix = Boolean(fullPrefixMatched || stableCacheBreakpoint);
+  const deepestPrefixMismatch = Boolean(
     previous
     && prefixHash
     && previous.cachePrefixHash !== prefixHash
     && patchResult.estimatedPromptTokens >= patchResult.minimumCacheTokens
     && !prefixExpired
   );
+  const prefixMismatch = Boolean(deepestPrefixMismatch && !stableCacheBreakpoint);
   const missingPreviousPrefix = Boolean(
     !previous
     && prefixHash
@@ -539,6 +554,10 @@ function getClaudePrefixComparison(patchResult, requestInfo, now = new Date().to
     previousPrefixTokens: previous?.cachePrefixTokens ?? null,
     previousAgeMs,
     matchedPreviousPrefix,
+    fullPrefixMatched,
+    stableCacheBreakpoint,
+    matchedCacheBreakpointTokens: stableCacheBreakpoint?.tokens ?? null,
+    deepestPrefixMismatch,
     prefixMismatch,
     prefixExpired,
     missingPreviousPrefix,
@@ -551,6 +570,54 @@ function getClaudePrefixComparison(patchResult, requestInfo, now = new Date().to
     ...comparison,
     prefixDiagnosis: buildPrefixDiagnosis(patchResult, comparison),
   };
+}
+
+function normalizeCacheBreakpoints(breakpoints, fallback = {}) {
+  const normalized = Array.isArray(breakpoints) ? breakpoints.filter((item) => item?.hash) : [];
+  if (normalized.length) {
+    return normalized;
+  }
+  if (fallback.hash) {
+    return [{
+      hash: fallback.hash,
+      tokens: fallback.tokens ?? null,
+      source: fallback.source || null,
+      segmentIndex: null,
+    }];
+  }
+  return [];
+}
+
+function findStableCacheBreakpoint(previousBreakpoints, currentBreakpoints, minimumTokens) {
+  let best = null;
+  const previousHashes = new Set(previousBreakpoints.map((item) => item.hash));
+  for (const current of currentBreakpoints) {
+    if (
+      current?.hash
+      && previousHashes.has(current.hash)
+      && (current.tokens || 0) >= minimumTokens
+      && (!best || (current.tokens || 0) > (best.tokens || 0))
+    ) {
+      best = summarizeCacheBreakpoint(current);
+    }
+  }
+  return best;
+}
+
+function summarizeCacheBreakpoint(breakpoint) {
+  if (!breakpoint) {
+    return null;
+  }
+  return {
+    source: breakpoint.source || null,
+    role: breakpoint.role || null,
+    tokens: breakpoint.tokens ?? null,
+    segmentIndex: breakpoint.segmentIndex ?? null,
+  };
+}
+
+function summarizeSegmentsForStatus(segments) {
+  return segments.map((segment) => summarizeSegmentFingerprint(segment));
 }
 
 function comparePrefixSegments(previousSegments, currentSegments) {
@@ -701,6 +768,15 @@ function buildPrefixDiagnosis(patchResult, comparison) {
     };
   }
   if (comparison.matchedPreviousPrefix) {
+    if (!comparison.fullPrefixMatched && comparison.stableCacheBreakpoint) {
+      return {
+        status: 'partial_stable',
+        likelySource: 'earlier cache breakpoint stable; later prefix changed',
+        action: 'Allow the request: it should be eligible to read the stable breakpoint and write the newer one.',
+        details: `Stable breakpoint ${comparison.stableCacheBreakpoint.tokens || 0} tokens at ${comparison.stableCacheBreakpoint.source || 'unknown'}; deepest prefix changed.`,
+        changedSegments: comparison.prefixDiffs || [],
+      };
+    }
     return {
       status: 'stable',
       likelySource: 'cache prefix stable',
@@ -774,8 +850,13 @@ function recordClaudeAttempt(patchResult, requestInfo, now, outcome) {
     minimumCacheTokens: patchResult.minimumCacheTokens ?? null,
     belowMinimum: patchResult.belowMinimum ?? null,
     cachePrefixHash: prefixHash,
-    cachePrefixSegments: patchResult.cachePrefixSegments || [],
+    cachePrefixSegments: summarizeSegmentsForStatus(patchResult.cachePrefixSegments || []),
+    cacheBreakpoints: (patchResult.cacheBreakpoints || []).map(summarizeCacheBreakpoint),
     matchedPreviousPrefix: comparison.matchedPreviousPrefix,
+    fullPrefixMatched: comparison.fullPrefixMatched,
+    stableCacheBreakpoint: comparison.stableCacheBreakpoint || null,
+    matchedCacheBreakpointTokens: comparison.matchedCacheBreakpointTokens ?? null,
+    deepestPrefixMismatch: comparison.deepestPrefixMismatch,
     previousAt: comparison.previousAt || null,
     previousPrefixTokens: comparison.previousPrefixTokens ?? null,
     previousAgeMs: comparison.previousAgeMs ?? null,
@@ -797,6 +878,7 @@ function recordClaudeAttempt(patchResult, requestInfo, now, outcome) {
       cachePrefixHash: prefixHash,
       cachePrefixTokens: patchResult.estimatedPromptTokens ?? null,
       cachePrefixSegments: patchResult.cachePrefixSegments || [],
+      cacheBreakpoints: patchResult.cacheBreakpoints || [],
     });
     savePrefixHistory();
   }
@@ -817,6 +899,7 @@ function loadPrefixHistory() {
           cachePrefixHash: String(value.cachePrefixHash),
           cachePrefixTokens: value.cachePrefixTokens ?? null,
           cachePrefixSegments: Array.isArray(value.cachePrefixSegments) ? value.cachePrefixSegments : [],
+          cacheBreakpoints: Array.isArray(value.cacheBreakpoints) ? value.cacheBreakpoints : [],
         });
       }
     }
@@ -869,6 +952,7 @@ function patchClaudeCacheRequestBuffer(buffer, requestInfo) {
       belowMinimum: result.belowMinimum,
       cachePrefixHash: result.cachePrefixHash,
       cachePrefixSegments: result.cachePrefixSegments,
+      cacheBreakpoints: result.cacheBreakpoints,
       cacheTtl: result.cacheTtl,
       autoBreakpoint: result.autoBreakpoint,
       reason: result.reason,
@@ -887,6 +971,7 @@ function patchClaudeCacheRequestBuffer(buffer, requestInfo) {
     belowMinimum: result.belowMinimum,
     cachePrefixHash: result.cachePrefixHash,
     cachePrefixSegments: result.cachePrefixSegments,
+    cacheBreakpoints: result.cacheBreakpoints,
     cacheTtl: result.cacheTtl,
     autoBreakpoint: result.autoBreakpoint,
     userId: result.userId,
@@ -953,6 +1038,7 @@ function patchClaudeCacheRequestBody(body, options = {}) {
     belowMinimum,
     cachePrefixHash: cachePrefixInfo.hash,
     cachePrefixSegments: cachePrefixInfo.segments,
+    cacheBreakpoints: cachePrefixInfo.breakpoints,
     cacheTtl: ttl,
     autoBreakpoint,
     cacheReady: !changed && isCacheReady(body),
@@ -1009,16 +1095,25 @@ function getCacheControlledPrefixInfo(body) {
   const segments = collectPromptSegments(body);
 
   let prefix = '';
-  let result = { tokens: 0, hash: null, segments: [] };
+  let result = { tokens: 0, hash: null, segments: [], breakpoints: [] };
   for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index];
     prefix = prefix ? `${prefix}\n\n${segment.text}` : segment.text;
     if (segment.hasCacheControl) {
       const tokens = estimateTokens(prefix);
+      const breakpoint = {
+        segmentIndex: index,
+        source: segment.source || `segment:${index}`,
+        role: segment.role || null,
+        tokens,
+        hash: hashString(prefix),
+      };
+      result.breakpoints.push(breakpoint);
       if (tokens >= result.tokens) {
         result = {
+          ...result,
           tokens,
-          hash: hashString(prefix),
+          hash: breakpoint.hash,
           segments: buildSegmentFingerprints(segments.slice(0, index + 1)),
         };
       }
@@ -1540,6 +1635,7 @@ module.exports = {
     copyServerPluginFiles,
     guardState,
     buildPrefixDiagnosis,
+    findStableCacheBreakpoint,
     getCacheControlledPrefixInfo,
     getGuardBlockReason,
     estimateCacheControlledPrefixTokens,

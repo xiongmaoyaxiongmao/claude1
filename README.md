@@ -73,6 +73,7 @@ The server plugin also patches outgoing Claude requests in-process:
 - Reports the first changed prefix segment and inner line/paragraph index on mismatch without storing the prompt text.
 - Adds a plain-language prefix diagnosis with likely source and suggested next action.
 - Labels every cache-prefix segment as stable, changed, added, or removed after two comparable Claude requests.
+- Treats any stable cache-control breakpoint above the model minimum as cache-readable, even when a later/deeper breakpoint changes.
 - Shows the estimated cache-controlled prefix tokens against the model-family cache minimum.
 - Leaves non-Claude models untouched.
 

@@ -613,6 +613,9 @@ function renderServerStatus() {
     const diagnosis = payload.lastClaude?.prefixDiagnosis
       ? `；诊断=${payload.lastClaude.prefixDiagnosis.status}${payload.lastClaude.prefixDiagnosis.likelySource ? `：${payload.lastClaude.prefixDiagnosis.likelySource}` : ''}`
       : '';
+    const stableBreakpoint = payload.lastClaude?.stableCacheBreakpoint
+      ? `；稳定断点=${payload.lastClaude.stableCacheBreakpoint.tokens || 0}t@${payload.lastClaude.stableCacheBreakpoint.source || '-'}`
+      : '';
     const segmentReport = Array.isArray(payload.lastClaude?.prefixSegmentReport)
       ? summarizeSegmentReport(payload.lastClaude.prefixSegmentReport)
       : '';
@@ -620,7 +623,7 @@ function renderServerStatus() {
     const skipHint = skipped
       ? `；最近跳过=${payload.lastSkippedReason || 'unknown'}${payload.lastSkippedModel ? ` (${payload.lastSkippedModel})` : ''}`
       : '';
-    node.textContent = `Server plugin${version} 已加载；已补丁 ${payload.patchedRequests || 0} 次；已自带缓存 ${payload.cacheReadyRequests || 0} 次；跳过 ${skipped} 次${skipHint}${threshold}${auto}${guard}${lastClaude}${prefixDiff}${diagnosis}${segmentReport}${update}；user_id=${payload.userId || '-'}`;
+    node.textContent = `Server plugin${version} 已加载；已补丁 ${payload.patchedRequests || 0} 次；已自带缓存 ${payload.cacheReadyRequests || 0} 次；跳过 ${skipped} 次${skipHint}${threshold}${auto}${guard}${lastClaude}${prefixDiff}${diagnosis}${stableBreakpoint}${segmentReport}${update}；user_id=${payload.userId || '-'}`;
     return;
   }
 
