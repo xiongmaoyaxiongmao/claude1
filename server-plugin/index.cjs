@@ -6,7 +6,8 @@ const https = require('node:https');
 const path = require('node:path');
 
 const MAX_ITEMS = 100;
-const PLUGIN_VERSION = '0.1.11';
+const PLUGIN_VERSION = '0.1.12';
+const SERVER_PLUGIN_PACKAGE_NAME = 'claude-cache-lens-server-plugin';
 const snapshots = [];
 const patcherState = {
   installed: false,
@@ -90,9 +91,26 @@ async function init(router) {
     res.json({
       ok: true,
       version: PLUGIN_VERSION,
+      selfUpdate: getSelfUpdateStatus(),
       ...patcherState,
       userId: getMetadataUserId(),
     });
+  });
+
+  router.get('/self-update', (_req, res) => {
+    res.json({
+      ok: true,
+      ...getSelfUpdateStatus(),
+    });
+  });
+
+  router.post('/self-update', (req, res) => {
+    try {
+      const result = selfUpdateServerPlugin({ force: Boolean(req.body?.force) });
+      res.json({ ok: true, ...result });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message || String(error) });
+    }
   });
 
   installRequestPatcher();
@@ -595,11 +613,138 @@ function sanitizeTarget(href) {
   }
 }
 
+function getSelfUpdateStatus() {
+  const source = findSelfUpdateSource();
+  return {
+    currentVersion: PLUGIN_VERSION,
+    sourceFound: Boolean(source),
+    sourceVersion: source?.version || null,
+    updateAvailable: Boolean(source && compareVersions(source.version, PLUGIN_VERSION) > 0),
+    restartRequired: false,
+  };
+}
+
+function selfUpdateServerPlugin(options = {}) {
+  const source = findSelfUpdateSource();
+  if (!source) {
+    throw new Error('No extension server-plugin source found.');
+  }
+  const shouldCopy = options.force || compareVersions(source.version, PLUGIN_VERSION) > 0 || source.version !== PLUGIN_VERSION;
+  if (!shouldCopy) {
+    return {
+      copied: false,
+      currentVersion: PLUGIN_VERSION,
+      sourceVersion: source.version,
+      restartRequired: false,
+    };
+  }
+
+  const destination = path.resolve(__dirname);
+  copyServerPluginFiles(source.dir, destination);
+  return {
+    copied: true,
+    currentVersion: PLUGIN_VERSION,
+    sourceVersion: source.version,
+    restartRequired: true,
+  };
+}
+
+function findSelfUpdateSource() {
+  const root = process.cwd();
+  const candidates = [
+    path.resolve(root, 'data', 'default-user', 'extensions', 'claude1', 'server-plugin'),
+    path.resolve(root, 'data', 'default-user', 'extensions', 'claude-cache-lens', 'server-plugin'),
+    ...scanExtensionServerPluginDirs(path.resolve(root, 'data')),
+  ];
+  const unique = [...new Set(candidates.map((candidate) => path.resolve(candidate)))];
+  const ownDir = path.resolve(__dirname);
+  const matches = [];
+
+  for (const candidate of unique) {
+    if (candidate === ownDir || !fs.existsSync(candidate)) {
+      continue;
+    }
+    const packageJson = readPackageJson(path.join(candidate, 'package.json'));
+    if (packageJson?.name !== SERVER_PLUGIN_PACKAGE_NAME) {
+      continue;
+    }
+    matches.push({
+      dir: candidate,
+      version: String(packageJson.version || '0.0.0'),
+    });
+  }
+
+  matches.sort((a, b) => compareVersions(b.version, a.version));
+  return matches[0] || null;
+}
+
+function scanExtensionServerPluginDirs(dataDir) {
+  const result = [];
+  for (const userDir of safeReadDir(dataDir)) {
+    const extensionsDir = path.join(dataDir, userDir, 'extensions');
+    for (const extensionDir of safeReadDir(extensionsDir)) {
+      result.push(path.join(extensionsDir, extensionDir, 'server-plugin'));
+    }
+  }
+  return result;
+}
+
+function safeReadDir(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
+
+function readPackageJson(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function copyServerPluginFiles(sourceDir, destinationDir) {
+  fs.mkdirSync(destinationDir, { recursive: true });
+  for (const name of ['index.js', 'index.cjs', 'package.json']) {
+    const source = path.join(sourceDir, name);
+    if (!fs.existsSync(source)) {
+      throw new Error(`Missing server plugin file: ${name}`);
+    }
+    fs.copyFileSync(source, path.join(destinationDir, name));
+  }
+}
+
+function compareVersions(a, b) {
+  const left = parseVersion(a);
+  const right = parseVersion(b);
+  for (let i = 0; i < 3; i += 1) {
+    if (left[i] !== right[i]) {
+      return left[i] > right[i] ? 1 : -1;
+    }
+  }
+  return 0;
+}
+
+function parseVersion(value) {
+  return String(value || '0.0.0')
+    .split('.')
+    .slice(0, 3)
+    .map((part) => Number.parseInt(part, 10) || 0)
+    .concat([0, 0, 0])
+    .slice(0, 3);
+}
+
 module.exports = {
   init,
   exit,
   _private: {
     buildClaudeBlock,
+    compareVersions,
+    copyServerPluginFiles,
     isClaudeLikeModel,
     normalizeClaudeSettings,
     patchClaudeCacheRequestBody,

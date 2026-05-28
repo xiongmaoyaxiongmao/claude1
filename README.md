@@ -56,6 +56,8 @@ Restart SillyTavern. The plugin folder must contain `index.js`, `index.cjs`, and
 - `GET /api/plugins/claude-cache-lens/config`
 - `POST /api/plugins/claude-cache-lens/config`
 - `GET /api/plugins/claude-cache-lens/patcher`
+- `GET /api/plugins/claude-cache-lens/self-update`
+- `POST /api/plugins/claude-cache-lens/self-update`
 
 The config endpoint only updates the top-level `claude:` block in `config.yaml` and creates a backup before writing. Restart SillyTavern after applying the config.
 
@@ -73,6 +75,8 @@ GET http://127.0.0.1:8000/api/plugins/claude-cache-lens/patcher
 ```
 
 If `/config` works but `/patcher` returns `Not found`, the running server plugin is older than `0.1.9`. Copy `server-plugin` into `SillyTavern/plugins/claude-cache-lens` again and fully restart SillyTavern.
+
+After server plugin `0.1.12` is installed once, future extension updates can sync the server plugin from the panel plug button. A full SillyTavern restart is still required after syncing because the server-side code is loaded at process start.
 
 ## Test
 

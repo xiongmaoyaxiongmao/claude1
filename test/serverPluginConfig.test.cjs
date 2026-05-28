@@ -1,5 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const { _private } = require('../server-plugin/index.cjs');
 
@@ -141,4 +144,32 @@ test('does not patch non-Claude chat completion bodies', () => {
   assert.equal(result.changed, false);
   assert.equal(result.reason, 'non_claude_model');
   assert.equal(body.metadata, undefined);
+});
+
+test('compares semantic versions for server plugin self update', () => {
+  assert.equal(_private.compareVersions('0.1.12', '0.1.11'), 1);
+  assert.equal(_private.compareVersions('0.1.12', '0.1.12'), 0);
+  assert.equal(_private.compareVersions('0.1.9', '0.1.12'), -1);
+});
+
+test('copies only server plugin entry files during self update', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ccl-server-plugin-'));
+  const source = path.join(root, 'source');
+  const destination = path.join(root, 'destination');
+  try {
+    fs.mkdirSync(source, { recursive: true });
+    fs.writeFileSync(path.join(source, 'index.js'), 'module.exports = {};\n');
+    fs.writeFileSync(path.join(source, 'index.cjs'), "'use strict';\n");
+    fs.writeFileSync(path.join(source, 'package.json'), '{"name":"claude-cache-lens-server-plugin"}\n');
+    fs.writeFileSync(path.join(source, 'ignore.txt'), 'do not copy\n');
+
+    _private.copyServerPluginFiles(source, destination);
+
+    assert.equal(fs.readFileSync(path.join(destination, 'index.js'), 'utf8'), 'module.exports = {};\n');
+    assert.equal(fs.existsSync(path.join(destination, 'index.cjs')), true);
+    assert.equal(fs.existsSync(path.join(destination, 'package.json')), true);
+    assert.equal(fs.existsSync(path.join(destination, 'ignore.txt')), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

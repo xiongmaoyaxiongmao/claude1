@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.12
+
+- Add a server plugin self-update endpoint that copies the latest bundled `server-plugin` files from the installed extension.
+- Add a panel plug button to sync the server plugin after updating the extension.
+
 ## 0.1.11
 
 - Report the last skipped request reason, target kind, and model name in the patcher status.

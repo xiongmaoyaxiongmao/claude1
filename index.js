@@ -170,6 +170,9 @@ function mountPanel() {
           <button id="ccl_apply_config" class="menu_button" type="button" title="Apply config with server plugin">
             <i class="fa-solid fa-floppy-disk"></i>
           </button>
+          <button id="ccl_sync_server_plugin" class="menu_button" type="button" title="Sync server plugin from extension">
+            <i class="fa-solid fa-plug-circle-bolt"></i>
+          </button>
         </div>
         <div class="ccl-config-controls">
           <label class="ccl-field">
@@ -235,6 +238,7 @@ function bindEvents(context) {
   });
   panel.querySelector('#ccl_copy_config')?.addEventListener('click', copyRecommendedConfig);
   panel.querySelector('#ccl_apply_config')?.addEventListener('click', applyRecommendedConfig);
+  panel.querySelector('#ccl_sync_server_plugin')?.addEventListener('click', syncServerPlugin);
   panel.querySelector('#ccl_depth_select')?.addEventListener('change', (event) => {
     const settings = getSettings();
     settings.cachingAtDepthOverride = Number(event.target.value);
@@ -429,6 +433,31 @@ async function loadServerConfig(options = {}) {
   renderPanel();
 }
 
+async function syncServerPlugin() {
+  const hintNode = document.getElementById('ccl_server_status');
+  try {
+    const response = await fetch('/api/plugins/claude-cache-lens/self-update', {
+      method: 'POST',
+      headers: getJsonHeaders(),
+      body: JSON.stringify({ force: false }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `Server plugin returned ${response.status}`);
+    }
+    if (hintNode) {
+      hintNode.textContent = payload.copied
+        ? `Server plugin 已同步到 ${payload.sourceVersion}；完整重启 ST 后生效。`
+        : `Server plugin 已是最新版 ${payload.currentVersion}。`;
+    }
+    loadServerStatus().catch(() => {});
+  } catch (error) {
+    if (hintNode) {
+      hintNode.textContent = `无法同步 server plugin：${error.message || error}`;
+    }
+  }
+}
+
 async function loadServerStatus() {
   latestState.serverStatus = { state: 'checking' };
   renderServerStatus();
@@ -496,11 +525,14 @@ function renderServerStatus() {
   if (status.state === 'active') {
     const payload = status.payload || {};
     const version = payload.version ? ` v${payload.version}` : '';
+    const update = payload.selfUpdate?.updateAvailable
+      ? `；扩展内有新版 server plugin ${payload.selfUpdate.sourceVersion}，点插头按钮同步`
+      : '';
     const skipped = payload.skippedRequests || 0;
     const skipHint = skipped
       ? `；最近跳过=${payload.lastSkippedReason || 'unknown'}${payload.lastSkippedModel ? ` (${payload.lastSkippedModel})` : ''}`
       : '';
-    node.textContent = `Server plugin${version} 已加载；已补丁 ${payload.patchedRequests || 0} 次；已自带缓存 ${payload.cacheReadyRequests || 0} 次；跳过 ${skipped} 次${skipHint}；user_id=${payload.userId || '-'}`;
+    node.textContent = `Server plugin${version} 已加载；已补丁 ${payload.patchedRequests || 0} 次；已自带缓存 ${payload.cacheReadyRequests || 0} 次；跳过 ${skipped} 次${skipHint}${update}；user_id=${payload.userId || '-'}`;
     return;
   }
 
