@@ -6,7 +6,7 @@ Claude Cache Lens is a SillyTavern third-party extension for prompt-cache diagno
 
 - `manifest.json`, `index.js`, `style.css`: the SillyTavern UI extension.
 - `src/cacheLensCore.js`: shared prompt snapshot and diagnosis logic.
-- `server-plugin/index.cjs`: optional SillyTavern server plugin with `/api/plugins/claude-cache-lens/diagnose`.
+- `server-plugin/index.cjs`: optional SillyTavern server plugin for diagnostics and one-click `config.yaml` updates.
 - `gateway/server.js`: optional Claude API gateway for real usage token tracking.
 - `test/`: Node built-in tests for the analyzer.
 
@@ -48,6 +48,10 @@ Restart SillyTavern. The plugin exposes:
 - `GET /api/plugins/claude-cache-lens/diagnose`
 - `POST /api/plugins/claude-cache-lens/diagnose`
 - `DELETE /api/plugins/claude-cache-lens/diagnose`
+- `GET /api/plugins/claude-cache-lens/config`
+- `POST /api/plugins/claude-cache-lens/config`
+
+The config endpoint only updates the top-level `claude:` block in `config.yaml` and creates a backup before writing. Restart SillyTavern after applying the config.
 
 ## Optional Claude gateway
 

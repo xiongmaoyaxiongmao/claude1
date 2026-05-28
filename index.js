@@ -10,7 +10,7 @@ const HISTORY_KEY = `${MODULE_NAME}:history`;
 
 const defaultSettings = Object.freeze({
   enabled: true,
-  sendSnapshotsToServerPlugin: false,
+  sendSnapshotsToServerPlugin: true,
   gatewayUrl: '',
   maxStoredSnapshots: 20,
 });
@@ -163,6 +163,9 @@ function mountPanel() {
           <button id="ccl_copy_config" class="menu_button" type="button" title="Copy config.yaml snippet">
             <i class="fa-solid fa-copy"></i>
           </button>
+          <button id="ccl_apply_config" class="menu_button" type="button" title="Apply config with server plugin">
+            <i class="fa-solid fa-floppy-disk"></i>
+          </button>
         </div>
         <pre id="ccl_config_text" class="ccl-config-text">Waiting for generation.</pre>
         <div id="ccl_config_hint" class="ccl-note">The plugin will generate the exact config.yaml snippet after the first request.</div>
@@ -207,6 +210,7 @@ function bindEvents(context) {
     renderPanel();
   });
   panel.querySelector('#ccl_copy_config')?.addEventListener('click', copyRecommendedConfig);
+  panel.querySelector('#ccl_apply_config')?.addEventListener('click', applyRecommendedConfig);
   panel.querySelector('#ccl_export')?.addEventListener('click', exportDiagnostics);
   panel.querySelector('#ccl_gateway_ping')?.addEventListener('click', readGatewayUsage);
 
@@ -337,19 +341,51 @@ async function copyRecommendedConfig() {
   }
 }
 
+async function applyRecommendedConfig() {
+  const analysis = latestState.analysis || (latestState.snapshot ? analyzeSnapshot(latestState.snapshot, null) : null);
+  const hintNode = document.getElementById('ccl_config_hint');
+  try {
+    const response = await fetch('/api/plugins/claude-cache-lens/config', {
+      method: 'POST',
+      headers: getJsonHeaders(),
+      body: JSON.stringify({ settings: getRecommendedSettings(analysis) }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `Server plugin returned ${response.status}`);
+    }
+    if (hintNode) {
+      hintNode.textContent = `已写入 ${payload.configPath}，已备份。重启 SillyTavern 后生效。`;
+    }
+  } catch (error) {
+    if (hintNode) {
+      hintNode.textContent = `无法直接写入。请确认 server plugin 已安装且 enableServerPlugins=true。错误：${error.message || error}`;
+    }
+  }
+}
+
 function buildConfigSnippet(analysis) {
+  const recommendations = getRecommendedSettings(analysis);
+  return [
+    'claude:',
+    `  enableSystemPromptCache: ${Boolean(recommendations.enableSystemPromptCache)}`,
+    `  cachingAtDepth: ${recommendations.cachingAtDepth}`,
+    `  extendedTTL: ${Boolean(recommendations.extendedTTL)}`,
+  ].join('\n');
+}
+
+function getRecommendedSettings(analysis) {
   const recommendations = analysis?.recommendations || {
     enableSystemPromptCache: true,
     cachingAtDepth: 2,
     extendedTTL: false,
   };
   const depth = recommendations.cachingAtDepth == null ? 2 : recommendations.cachingAtDepth;
-  return [
-    'claude:',
-    `  enableSystemPromptCache: ${Boolean(recommendations.enableSystemPromptCache)}`,
-    `  cachingAtDepth: ${depth}`,
-    `  extendedTTL: ${Boolean(recommendations.extendedTTL)}`,
-  ].join('\n');
+  return {
+    enableSystemPromptCache: Boolean(recommendations.enableSystemPromptCache),
+    cachingAtDepth: depth,
+    extendedTTL: Boolean(recommendations.extendedTTL),
+  };
 }
 
 async function copyText(text) {
@@ -408,9 +444,17 @@ function exportDiagnostics() {
 async function postToServerPlugin(payload) {
   await fetch('/api/plugins/claude-cache-lens/diagnose', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getJsonHeaders(),
     body: JSON.stringify(payload),
   });
+}
+
+function getJsonHeaders() {
+  const context = getContextSafe();
+  return {
+    'Content-Type': 'application/json',
+    ...(context?.getRequestHeaders?.() || {}),
+  };
 }
 
 function appendHistory(entry, maxItems) {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4
+
+- Add server-plugin endpoints that can write the recommended Claude cache settings into `config.yaml` with an automatic backup.
+- Add a panel button to apply the recommended config through the server plugin.
+- Send diagnostic snapshots to the server plugin by default when it is installed.
+
 ## 0.1.3
 
 - Add a Claude Cache Config section with an exact `config.yaml` snippet and copy button.
