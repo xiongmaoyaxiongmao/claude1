@@ -610,11 +610,17 @@ function renderServerStatus() {
     const prefixDiff = payload.lastClaude?.prefixDiff
       ? `；首变=${payload.lastClaude.prefixDiff.current?.source || payload.lastClaude.prefixDiff.previous?.source || payload.lastClaude.prefixDiff.reason}${payload.lastClaude.prefixDiff.innerDiff ? `#${payload.lastClaude.prefixDiff.innerDiff.index}` : ''}`
       : '';
+    const diagnosis = payload.lastClaude?.prefixDiagnosis
+      ? `；诊断=${payload.lastClaude.prefixDiagnosis.status}${payload.lastClaude.prefixDiagnosis.likelySource ? `：${payload.lastClaude.prefixDiagnosis.likelySource}` : ''}`
+      : '';
+    const segmentReport = Array.isArray(payload.lastClaude?.prefixSegmentReport)
+      ? summarizeSegmentReport(payload.lastClaude.prefixSegmentReport)
+      : '';
     const skipped = payload.skippedRequests || 0;
     const skipHint = skipped
       ? `；最近跳过=${payload.lastSkippedReason || 'unknown'}${payload.lastSkippedModel ? ` (${payload.lastSkippedModel})` : ''}`
       : '';
-    node.textContent = `Server plugin${version} 已加载；已补丁 ${payload.patchedRequests || 0} 次；已自带缓存 ${payload.cacheReadyRequests || 0} 次；跳过 ${skipped} 次${skipHint}${threshold}${auto}${guard}${lastClaude}${prefixDiff}${update}；user_id=${payload.userId || '-'}`;
+    node.textContent = `Server plugin${version} 已加载；已补丁 ${payload.patchedRequests || 0} 次；已自带缓存 ${payload.cacheReadyRequests || 0} 次；跳过 ${skipped} 次${skipHint}${threshold}${auto}${guard}${lastClaude}${prefixDiff}${diagnosis}${segmentReport}${update}；user_id=${payload.userId || '-'}`;
     return;
   }
 
@@ -634,6 +640,22 @@ function renderServerStatus() {
   }
 
   node.textContent = `Server plugin 检查失败：${status.message || status.state}`;
+}
+
+function summarizeSegmentReport(report) {
+  if (!report.length) {
+    return '';
+  }
+  const counts = report.reduce((result, item) => {
+    result[item.status] = (result[item.status] || 0) + 1;
+    return result;
+  }, {});
+  const changed = report
+    .filter((item) => item.status !== 'stable')
+    .slice(0, 3)
+    .map((item) => `${item.source}${item.innerDiff ? `#${item.innerDiff.index}` : ''}`)
+    .join(',');
+  return `；分段 stable=${counts.stable || 0}, changed=${counts.changed || 0}, added=${counts.added || 0}, removed=${counts.removed || 0}${changed ? `；变段=${changed}` : ''}`;
 }
 
 function compareVersions(a, b) {

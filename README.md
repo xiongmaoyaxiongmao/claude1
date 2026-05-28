@@ -71,6 +71,8 @@ The server plugin also patches outgoing Claude requests in-process:
 - Requires an explicit one-shot baseline write in Strict Guard mode when no previous, changed, or expired Claude cache baseline exists.
 - Tracks whether the current Claude cache prefix matches the previous Claude request for the same target/model/user.
 - Reports the first changed prefix segment and inner line/paragraph index on mismatch without storing the prompt text.
+- Adds a plain-language prefix diagnosis with likely source and suggested next action.
+- Labels every cache-prefix segment as stable, changed, added, or removed after two comparable Claude requests.
 - Shows the estimated cache-controlled prefix tokens against the model-family cache minimum.
 - Leaves non-Claude models untouched.
 

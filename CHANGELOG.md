@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.25
+
+- Add a labeled `prefixSegmentReport` for every cache-prefix segment: stable, changed, added, or removed.
+- Show segment status counts and changed segment labels in the panel.
+
+## 0.1.24
+
+- Add `lastClaude.prefixDiagnosis` with status, likely source, details, and suggested next action.
+- Report multiple changed prefix segments, not only the first one, while still omitting prompt text.
+
 ## 0.1.23
 
 - Add inner line/paragraph fingerprints for changed prefix segments, still without storing prompt text.

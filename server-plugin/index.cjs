@@ -6,7 +6,7 @@ const https = require('node:https');
 const path = require('node:path');
 
 const MAX_ITEMS = 100;
-const PLUGIN_VERSION = '0.1.23';
+const PLUGIN_VERSION = '0.1.25';
 const SERVER_PLUGIN_PACKAGE_NAME = 'claude-cache-lens-server-plugin';
 const STATE_DIR = path.resolve(__dirname, '.claude-cache-lens');
 const PREFIX_HISTORY_PATH = path.join(STATE_DIR, 'prefix-history.json');
@@ -526,8 +526,13 @@ function getClaudePrefixComparison(patchResult, requestInfo, now = new Date().to
   const prefixDiff = prefixMismatch
     ? comparePrefixSegments(previous?.cachePrefixSegments || [], patchResult.cachePrefixSegments || [])
     : null;
-
-  return {
+  const prefixDiffs = prefixMismatch
+    ? comparePrefixSegmentsAll(previous?.cachePrefixSegments || [], patchResult.cachePrefixSegments || [])
+    : [];
+  const prefixSegmentReport = previous
+    ? buildPrefixSegmentReport(previous.cachePrefixSegments || [], patchResult.cachePrefixSegments || [])
+    : buildPrefixSegmentReport([], patchResult.cachePrefixSegments || []);
+  const comparison = {
     target,
     prefixKey: key,
     previousAt: previous?.at || null,
@@ -538,33 +543,76 @@ function getClaudePrefixComparison(patchResult, requestInfo, now = new Date().to
     prefixExpired,
     missingPreviousPrefix,
     prefixDiff,
+    prefixDiffs,
+    prefixSegmentReport,
+  };
+
+  return {
+    ...comparison,
+    prefixDiagnosis: buildPrefixDiagnosis(patchResult, comparison),
   };
 }
 
 function comparePrefixSegments(previousSegments, currentSegments) {
+  return comparePrefixSegmentsAll(previousSegments, currentSegments, 1)[0] || null;
+}
+
+function comparePrefixSegmentsAll(previousSegments, currentSegments, limit = 12) {
+  const diffs = [];
   const maxLength = Math.max(previousSegments.length, currentSegments.length);
   for (let index = 0; index < maxLength; index += 1) {
     const previous = previousSegments[index] || null;
     const current = currentSegments[index] || null;
     if (!previous || !current) {
-      return {
+      diffs.push({
         index,
         reason: previous ? 'removed' : 'added',
         previous: summarizeSegmentFingerprint(previous),
         current: summarizeSegmentFingerprint(current),
-      };
-    }
-    if (previous.hash !== current.hash) {
-      return {
+      });
+    } else if (previous.hash !== current.hash) {
+      diffs.push({
         index,
         reason: 'changed',
         previous: summarizeSegmentFingerprint(previous),
         current: summarizeSegmentFingerprint(current),
         innerDiff: compareInnerFingerprints(previous.parts || [], current.parts || []),
-      };
+      });
+    }
+    if (diffs.length >= limit) {
+      break;
     }
   }
-  return null;
+  return diffs;
+}
+
+function buildPrefixSegmentReport(previousSegments, currentSegments) {
+  const report = [];
+  const maxLength = Math.max(previousSegments.length, currentSegments.length);
+  for (let index = 0; index < maxLength; index += 1) {
+    const previous = previousSegments[index] || null;
+    const current = currentSegments[index] || null;
+    const source = current?.source || previous?.source || `segment:${index}`;
+    const status = !previous
+      ? 'added'
+      : !current
+      ? 'removed'
+      : previous.hash === current.hash
+      ? 'stable'
+      : 'changed';
+    report.push({
+      index,
+      status,
+      source,
+      role: current?.role || previous?.role || null,
+      previous: summarizeSegmentFingerprint(previous),
+      current: summarizeSegmentFingerprint(current),
+      deltaChars: (current?.chars || 0) - (previous?.chars || 0),
+      deltaTokens: (current?.tokens || 0) - (previous?.tokens || 0),
+      innerDiff: status === 'changed' ? compareInnerFingerprints(previous?.parts || [], current?.parts || []) : null,
+    });
+  }
+  return report;
 }
 
 function summarizeSegmentFingerprint(segment) {
@@ -616,6 +664,98 @@ function summarizeInnerFingerprint(part) {
   };
 }
 
+function buildPrefixDiagnosis(patchResult, comparison) {
+  if (patchResult?.belowMinimum === true) {
+    return {
+      status: 'blocked_below_minimum',
+      likelySource: 'cache breakpoint too early',
+      action: 'Move the cache breakpoint later or reduce dynamic content before it.',
+      details: `Cache prefix ${patchResult.estimatedPromptTokens || 0}/${patchResult.minimumCacheTokens || 0} tokens.`,
+    };
+  }
+  if (comparison.prefixExpired) {
+    return {
+      status: 'expired',
+      likelySource: 'TTL expired',
+      action: 'Click the key button only when you intentionally want to pay for a fresh baseline write.',
+      details: `Previous baseline age ${Math.round((comparison.previousAgeMs || 0) / 1000)}s.`,
+    };
+  }
+  if (comparison.missingPreviousPrefix) {
+    return {
+      status: 'missing_baseline',
+      likelySource: 'no saved Claude baseline',
+      action: 'Click the key button once to intentionally write a baseline, then keep the next request within the TTL.',
+      details: 'Strict Guard blocks first writes unless explicitly allowed.',
+    };
+  }
+  if (comparison.prefixMismatch) {
+    const diff = comparison.prefixDiff;
+    const source = diff?.current?.source || diff?.previous?.source || 'unknown';
+    return {
+      status: 'prefix_changed',
+      likelySource: classifyChangedSource(source),
+      action: suggestActionForChangedSource(source),
+      details: buildDiffDetails(diff),
+      changedSegments: comparison.prefixDiffs || [],
+    };
+  }
+  if (comparison.matchedPreviousPrefix) {
+    return {
+      status: 'stable',
+      likelySource: 'cache prefix stable',
+      action: 'Request is eligible for cache read; if billing still shows no cache read, check provider routing/cache support.',
+      details: 'The current cache prefix hash matches the previous baseline.',
+    };
+  }
+  return {
+    status: 'observing',
+    likelySource: 'not enough Claude prefix history',
+    action: 'No action yet.',
+    details: 'Waiting for a comparable Claude request.',
+  };
+}
+
+function classifyChangedSource(source) {
+  if (/^system/.test(source)) {
+    return 'system prompt: preset, persona, world info, summary, or macro injection';
+  }
+  if (/message:\d+:user/.test(source)) {
+    return 'user/history content before the cache breakpoint';
+  }
+  if (/message:\d+:assistant/.test(source)) {
+    return 'assistant history before the cache breakpoint';
+  }
+  if (/^tools/.test(source)) {
+    return 'tool definition block';
+  }
+  return 'prompt prefix segment';
+}
+
+function suggestActionForChangedSource(source) {
+  if (/^system/.test(source)) {
+    return 'Move dynamic summary/world-info/macro content out of the cached system prefix, or use system-only caching only for fully static system text.';
+  }
+  if (/message:\d+/.test(source)) {
+    return 'Use a shallower history cache depth or keep only stable turns before the cache breakpoint.';
+  }
+  if (/^tools/.test(source)) {
+    return 'Keep tool definitions stable or disable caching across tool-set changes.';
+  }
+  return 'Compare the changed source and move dynamic content after the cache breakpoint.';
+}
+
+function buildDiffDetails(diff) {
+  if (!diff) {
+    return 'No segment-level diff available.';
+  }
+  const source = diff.current?.source || diff.previous?.source || `segment:${diff.index}`;
+  const inner = diff.innerDiff ? `, inner part #${diff.innerDiff.index} ${diff.innerDiff.reason}` : '';
+  const previousSize = diff.previous ? `${diff.previous.chars || 0} chars` : 'missing';
+  const currentSize = diff.current ? `${diff.current.chars || 0} chars` : 'missing';
+  return `${source} ${diff.reason}${inner}; previous=${previousSize}, current=${currentSize}.`;
+}
+
 function recordClaudeAttempt(patchResult, requestInfo, now, outcome) {
   const comparison = patchResult.prefixKey
     ? patchResult
@@ -645,6 +785,9 @@ function recordClaudeAttempt(patchResult, requestInfo, now, outcome) {
     usedBaselineWriteAllowance: patchResult.usedBaselineWriteAllowance || false,
     guardReason: patchResult.guardReason || null,
     prefixDiff: comparison.prefixDiff || null,
+    prefixDiffs: comparison.prefixDiffs || [],
+    prefixSegmentReport: comparison.prefixSegmentReport || [],
+    prefixDiagnosis: comparison.prefixDiagnosis || null,
     autoBreakpoint: patchResult.autoBreakpoint || null,
   };
 
@@ -1392,8 +1535,11 @@ module.exports = {
     buildClaudeBlock,
     compareVersions,
     comparePrefixSegments,
+    comparePrefixSegmentsAll,
+    buildPrefixSegmentReport,
     copyServerPluginFiles,
     guardState,
+    buildPrefixDiagnosis,
     getCacheControlledPrefixInfo,
     getGuardBlockReason,
     estimateCacheControlledPrefixTokens,

@@ -235,6 +235,50 @@ test('reports the first changed cache prefix segment without prompt text', () =>
   assert.equal(Object.hasOwn(diff.innerDiff.current, 'text'), false);
 });
 
+test('reports multiple changed prefix segments and a useful diagnosis', () => {
+  const previous = [
+    { source: 'system[0]', role: 'system', chars: 10, tokens: 3, hash: 'old-system', hasCacheControl: true },
+    { source: 'message:0:user', role: 'user', chars: 20, tokens: 5, hash: 'old-user', hasCacheControl: true },
+  ];
+  const current = [
+    { source: 'system[0]', role: 'system', chars: 12, tokens: 3, hash: 'new-system', hasCacheControl: true },
+    { source: 'message:0:user', role: 'user', chars: 22, tokens: 6, hash: 'new-user', hasCacheControl: true },
+  ];
+
+  const diffs = _private.comparePrefixSegmentsAll(previous, current);
+  const diagnosis = _private.buildPrefixDiagnosis(
+    { minimumCacheTokens: 4096, estimatedPromptTokens: 5000 },
+    {
+      prefixMismatch: true,
+      prefixDiff: diffs[0],
+      prefixDiffs: diffs,
+    }
+  );
+
+  assert.equal(diffs.length, 2);
+  assert.equal(diagnosis.status, 'prefix_changed');
+  assert.equal(diagnosis.likelySource.includes('system prompt'), true);
+  assert.equal(diagnosis.changedSegments.length, 2);
+});
+
+test('builds a labeled prefix segment report', () => {
+  const previous = [
+    { source: 'system[0]', role: 'system', chars: 10, tokens: 3, hash: 'same', hasCacheControl: true },
+    { source: 'message:0:user', role: 'user', chars: 20, tokens: 5, hash: 'old', hasCacheControl: false },
+  ];
+  const current = [
+    { source: 'system[0]', role: 'system', chars: 10, tokens: 3, hash: 'same', hasCacheControl: true },
+    { source: 'message:0:user', role: 'user', chars: 30, tokens: 8, hash: 'new', hasCacheControl: false },
+    { source: 'message:1:assistant', role: 'assistant', chars: 12, tokens: 3, hash: 'added', hasCacheControl: true },
+  ];
+
+  const report = _private.buildPrefixSegmentReport(previous, current);
+
+  assert.deepEqual(report.map((item) => item.status), ['stable', 'changed', 'added']);
+  assert.equal(report[1].deltaChars, 10);
+  assert.equal(Object.hasOwn(report[1].current, 'text'), false);
+});
+
 test('does not use the current user input as an automatic breakpoint before assistant prefill', () => {
   const body = {
     model: 'claude-opus-4-7',
@@ -380,9 +424,9 @@ test('one-shot baseline write allowance bypasses prefix replacement blocks', () 
 });
 
 test('compares semantic versions for server plugin self update', () => {
-  assert.equal(_private.compareVersions('0.1.23', '0.1.22'), 1);
-  assert.equal(_private.compareVersions('0.1.23', '0.1.23'), 0);
-  assert.equal(_private.compareVersions('0.1.9', '0.1.23'), -1);
+  assert.equal(_private.compareVersions('0.1.25', '0.1.24'), 1);
+  assert.equal(_private.compareVersions('0.1.25', '0.1.25'), 0);
+  assert.equal(_private.compareVersions('0.1.9', '0.1.25'), -1);
 });
 
 test('copies only server plugin entry files during self update', () => {
