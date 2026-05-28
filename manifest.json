@@ -7,7 +7,7 @@
   "js": "index.js",
   "css": "style.css",
   "author": "Codex",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "homePage": "https://github.com/xiongmaoyaxiongmao/claude1.git",
   "auto_update": true,
   "minimum_client_version": "1.10.0",

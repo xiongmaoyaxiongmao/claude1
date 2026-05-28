@@ -157,6 +157,17 @@ function mountPanel() {
         <div id="ccl_sources" class="ccl-chips"></div>
       </div>
 
+      <div class="ccl-section ccl-config-section">
+        <div class="ccl-section-title ccl-title-row">
+          <span>Claude Cache Config</span>
+          <button id="ccl_copy_config" class="menu_button" type="button" title="Copy config.yaml snippet">
+            <i class="fa-solid fa-copy"></i>
+          </button>
+        </div>
+        <pre id="ccl_config_text" class="ccl-config-text">Waiting for generation.</pre>
+        <div id="ccl_config_hint" class="ccl-note">The plugin will generate the exact config.yaml snippet after the first request.</div>
+      </div>
+
       <div class="ccl-section">
         <div class="ccl-section-title">Prefix Diff</div>
         <div id="ccl_diff" class="ccl-note">No snapshot yet.</div>
@@ -195,6 +206,7 @@ function bindEvents(context) {
     latestState = { snapshot: null, analysis: null, gatewaySummary: null };
     renderPanel();
   });
+  panel.querySelector('#ccl_copy_config')?.addEventListener('click', copyRecommendedConfig);
   panel.querySelector('#ccl_export')?.addEventListener('click', exportDiagnostics);
   panel.querySelector('#ccl_gateway_ping')?.addEventListener('click', readGatewayUsage);
 
@@ -233,6 +245,7 @@ function renderPanel() {
   setText('ccl_ttl', analysis?.recommendations.extendedTTL ? '1h' : '5m');
   renderStatus(analysis?.risk || 'Idle');
   renderSources(snapshot?.detectedSources || {});
+  renderConfig(analysis);
   renderDiff(analysis?.prefixDiff);
   renderReasons(analysis?.reasons || []);
   renderGatewaySummary(latestState.gatewaySummary);
@@ -289,6 +302,69 @@ function renderReasons(reasons) {
     item.textContent = reason;
     list.appendChild(item);
   }
+}
+
+function renderConfig(analysis) {
+  const configNode = document.getElementById('ccl_config_text');
+  const hintNode = document.getElementById('ccl_config_hint');
+  if (!configNode || !hintNode) return;
+
+  const snippet = buildConfigSnippet(analysis);
+  configNode.textContent = snippet;
+
+  if (!analysis) {
+    hintNode.textContent = '先发一条消息，插件会按实际结构生成配置。';
+    return;
+  }
+  if (analysis.apiMode === 'anthropic_native') {
+    hintNode.textContent = '当前是 Claude 通道。复制到 SillyTavern 根目录 config.yaml 后重启 ST。';
+    return;
+  }
+  if (analysis.apiMode === 'claude_compatible') {
+    hintNode.textContent = '当前像 Claude-compatible 通道。复制配置可用于 ST 的 Claude 通道；真实缓存仍取决于中转支持。';
+    return;
+  }
+  hintNode.textContent = '浏览器扩展不能直接写服务端 config.yaml，只能生成配置片段。';
+}
+
+async function copyRecommendedConfig() {
+  const analysis = latestState.analysis || (latestState.snapshot ? analyzeSnapshot(latestState.snapshot, null) : null);
+  const text = buildConfigSnippet(analysis);
+  await copyText(text);
+  const hintNode = document.getElementById('ccl_config_hint');
+  if (hintNode) {
+    hintNode.textContent = '已复制。粘到 SillyTavern/config.yaml 后重启 ST。';
+  }
+}
+
+function buildConfigSnippet(analysis) {
+  const recommendations = analysis?.recommendations || {
+    enableSystemPromptCache: true,
+    cachingAtDepth: 2,
+    extendedTTL: false,
+  };
+  const depth = recommendations.cachingAtDepth == null ? 2 : recommendations.cachingAtDepth;
+  return [
+    'claude:',
+    `  enableSystemPromptCache: ${Boolean(recommendations.enableSystemPromptCache)}`,
+    `  cachingAtDepth: ${depth}`,
+    `  extendedTTL: ${Boolean(recommendations.extendedTTL)}`,
+  ].join('\n');
+}
+
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  textarea.remove();
 }
 
 function renderGatewaySummary(summary) {

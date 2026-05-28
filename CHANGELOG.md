@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3
+
+- Add a Claude Cache Config section with an exact `config.yaml` snippet and copy button.
+- Clarify in-panel why the browser extension can generate config but cannot directly write SillyTavern server config.
+
 ## 0.1.2
 
 - Treat OpenAI-compatible custom endpoints as Claude-compatible when the selected model name contains `claude`.

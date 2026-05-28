@@ -53,6 +53,30 @@
   font-weight: 700;
 }
 
+.ccl-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ccl-title-row .menu_button {
+  margin-left: auto;
+}
+
+.ccl-config-text {
+  overflow: auto;
+  max-width: 100%;
+  margin: 0;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.35));
+  border-radius: 6px;
+  padding: 8px;
+  white-space: pre;
+  background: rgba(128, 128, 128, 0.12);
+  color: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+}
+
 .ccl-chips {
   display: flex;
   flex-wrap: wrap;
@@ -106,11 +130,6 @@
 .ccl-list {
   margin: 0;
   padding-left: 18px;
-}
-
-#ccl_gateway_url {
-  flex: 1;
-  min-width: 0;
 }
 
 @media (max-width: 720px) {
