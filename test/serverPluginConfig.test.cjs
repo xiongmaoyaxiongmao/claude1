@@ -196,11 +196,33 @@ test('cache prefix hash changes when the stable prefix changes', () => {
 test('reports the first changed cache prefix segment without prompt text', () => {
   const previous = [
     { source: 'system', role: 'system', chars: 12, tokens: 3, hash: 'same', hasCacheControl: false },
-    { source: 'message:0:user', role: 'user', chars: 40, tokens: 10, hash: 'old', hasCacheControl: true },
+    {
+      source: 'message:0:user',
+      role: 'user',
+      chars: 40,
+      tokens: 10,
+      hash: 'old',
+      hasCacheControl: true,
+      parts: [
+        { index: 0, chars: 10, tokens: 3, hash: 'same' },
+        { index: 1, chars: 20, tokens: 5, hash: 'old-inner' },
+      ],
+    },
   ];
   const current = [
     { source: 'system', role: 'system', chars: 12, tokens: 3, hash: 'same', hasCacheControl: false },
-    { source: 'message:0:user', role: 'user', chars: 44, tokens: 11, hash: 'new', hasCacheControl: true },
+    {
+      source: 'message:0:user',
+      role: 'user',
+      chars: 44,
+      tokens: 11,
+      hash: 'new',
+      hasCacheControl: true,
+      parts: [
+        { index: 0, chars: 10, tokens: 3, hash: 'same' },
+        { index: 1, chars: 24, tokens: 6, hash: 'new-inner' },
+      ],
+    },
   ];
 
   const diff = _private.comparePrefixSegments(previous, current);
@@ -208,7 +230,9 @@ test('reports the first changed cache prefix segment without prompt text', () =>
   assert.equal(diff.index, 1);
   assert.equal(diff.reason, 'changed');
   assert.equal(diff.current.source, 'message:0:user');
+  assert.equal(diff.innerDiff.index, 1);
   assert.equal(Object.hasOwn(diff.current, 'text'), false);
+  assert.equal(Object.hasOwn(diff.innerDiff.current, 'text'), false);
 });
 
 test('does not use the current user input as an automatic breakpoint before assistant prefill', () => {
@@ -356,9 +380,9 @@ test('one-shot baseline write allowance bypasses prefix replacement blocks', () 
 });
 
 test('compares semantic versions for server plugin self update', () => {
-  assert.equal(_private.compareVersions('0.1.22', '0.1.21'), 1);
-  assert.equal(_private.compareVersions('0.1.22', '0.1.22'), 0);
-  assert.equal(_private.compareVersions('0.1.9', '0.1.22'), -1);
+  assert.equal(_private.compareVersions('0.1.23', '0.1.22'), 1);
+  assert.equal(_private.compareVersions('0.1.23', '0.1.23'), 0);
+  assert.equal(_private.compareVersions('0.1.9', '0.1.23'), -1);
 });
 
 test('copies only server plugin entry files during self update', () => {

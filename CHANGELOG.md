@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.23
+
+- Add inner line/paragraph fingerprints for changed prefix segments, still without storing prompt text.
+- Show the inner changed part index in the panel when a prefix segment changes.
+
 ## 0.1.22
 
 - Fix one-shot baseline writes so the key button allows replacing an expired or changed cache baseline.

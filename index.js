@@ -608,7 +608,7 @@ function renderServerStatus() {
       ? `；Claude前缀${payload.lastClaude.matchedPreviousPrefix ? '稳定' : payload.lastClaude.missingPreviousPrefix ? '无基准' : '变化'}${payload.lastClaude.previousAt ? '' : '(首条)'}`
       : '';
     const prefixDiff = payload.lastClaude?.prefixDiff
-      ? `；首变=${payload.lastClaude.prefixDiff.current?.source || payload.lastClaude.prefixDiff.previous?.source || payload.lastClaude.prefixDiff.reason}`
+      ? `；首变=${payload.lastClaude.prefixDiff.current?.source || payload.lastClaude.prefixDiff.previous?.source || payload.lastClaude.prefixDiff.reason}${payload.lastClaude.prefixDiff.innerDiff ? `#${payload.lastClaude.prefixDiff.innerDiff.index}` : ''}`
       : '';
     const skipped = payload.skippedRequests || 0;
     const skipHint = skipped

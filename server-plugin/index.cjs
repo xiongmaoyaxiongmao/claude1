@@ -6,7 +6,7 @@ const https = require('node:https');
 const path = require('node:path');
 
 const MAX_ITEMS = 100;
-const PLUGIN_VERSION = '0.1.22';
+const PLUGIN_VERSION = '0.1.23';
 const SERVER_PLUGIN_PACKAGE_NAME = 'claude-cache-lens-server-plugin';
 const STATE_DIR = path.resolve(__dirname, '.claude-cache-lens');
 const PREFIX_HISTORY_PATH = path.join(STATE_DIR, 'prefix-history.json');
@@ -560,6 +560,7 @@ function comparePrefixSegments(previousSegments, currentSegments) {
         reason: 'changed',
         previous: summarizeSegmentFingerprint(previous),
         current: summarizeSegmentFingerprint(current),
+        innerDiff: compareInnerFingerprints(previous.parts || [], current.parts || []),
       };
     }
   }
@@ -576,6 +577,42 @@ function summarizeSegmentFingerprint(segment) {
     chars: segment.chars ?? null,
     tokens: segment.tokens ?? null,
     hasCacheControl: Boolean(segment.hasCacheControl),
+  };
+}
+
+function compareInnerFingerprints(previousParts, currentParts) {
+  const maxLength = Math.max(previousParts.length, currentParts.length);
+  for (let index = 0; index < maxLength; index += 1) {
+    const previous = previousParts[index] || null;
+    const current = currentParts[index] || null;
+    if (!previous || !current) {
+      return {
+        index,
+        reason: previous ? 'removed' : 'added',
+        previous: summarizeInnerFingerprint(previous),
+        current: summarizeInnerFingerprint(current),
+      };
+    }
+    if (previous.hash !== current.hash) {
+      return {
+        index,
+        reason: 'changed',
+        previous: summarizeInnerFingerprint(previous),
+        current: summarizeInnerFingerprint(current),
+      };
+    }
+  }
+  return null;
+}
+
+function summarizeInnerFingerprint(part) {
+  if (!part) {
+    return null;
+  }
+  return {
+    index: part.index ?? null,
+    chars: part.chars ?? null,
+    tokens: part.tokens ?? null,
   };
 }
 
@@ -855,8 +892,22 @@ function buildSegmentFingerprints(segments) {
     chars: String(segment.text ?? '').length,
     tokens: estimateTokens(segment.text),
     hash: hashString(segment.text),
+    parts: buildInnerFingerprints(segment.text),
     hasCacheControl: Boolean(segment.hasCacheControl),
   }));
+}
+
+function buildInnerFingerprints(text) {
+  return String(text ?? '')
+    .split(/\n{2,}|\n/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part, index) => ({
+      index,
+      chars: part.length,
+      tokens: estimateTokens(part),
+      hash: hashString(part),
+    }));
 }
 
 function hashString(value) {
