@@ -65,6 +65,7 @@ The server plugin also patches outgoing Claude requests in-process:
 
 - Adds top-level `metadata.user_id` with a stable default value.
 - Adds compatible cache breakpoints to native Claude and OpenAI-compatible Claude request bodies.
+- Automatically adds a later stable cache breakpoint when the configured depth is below the model's cache minimum.
 - Shows the estimated cache-controlled prefix tokens against the model-family cache minimum.
 - Leaves non-Claude models untouched.
 

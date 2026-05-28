@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.16
+
+- Automatically add a cache breakpoint at the first stable prompt segment that reaches the model's cache minimum.
+- Report when no stable non-current-input breakpoint can reach the minimum.
+
 ## 0.1.15
 
 - Show the estimated cache-controlled prefix size separately from the total prompt size.

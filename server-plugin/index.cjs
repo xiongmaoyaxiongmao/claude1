@@ -6,7 +6,7 @@ const https = require('node:https');
 const path = require('node:path');
 
 const MAX_ITEMS = 100;
-const PLUGIN_VERSION = '0.1.15';
+const PLUGIN_VERSION = '0.1.16';
 const SERVER_PLUGIN_PACKAGE_NAME = 'claude-cache-lens-server-plugin';
 const CACHE_MINIMUM_TOKENS = Object.freeze({
   opus45Plus: 4096,
@@ -30,6 +30,7 @@ const patcherState = {
   lastTotalPromptTokens: null,
   lastMinimumCacheTokens: null,
   lastBelowMinimum: null,
+  lastAutoBreakpoint: null,
   lastPatchedAt: null,
   lastTarget: null,
   lastUserId: null,
@@ -328,6 +329,7 @@ function makePatchedRequest(protocol, original) {
       patcherState.lastTotalPromptTokens = patchResult.totalPromptTokens ?? null;
       patcherState.lastMinimumCacheTokens = patchResult.minimumCacheTokens ?? null;
       patcherState.lastBelowMinimum = patchResult.belowMinimum ?? null;
+      patcherState.lastAutoBreakpoint = patchResult.autoBreakpoint || null;
       if (patchResult.changed) {
         req.setHeader('content-length', Buffer.byteLength(patchResult.body));
         patcherState.patchedRequests += 1;
@@ -383,6 +385,7 @@ function patchClaudeCacheRequestBuffer(buffer, requestInfo) {
       totalPromptTokens: result.totalPromptTokens,
       minimumCacheTokens: result.minimumCacheTokens,
       belowMinimum: result.belowMinimum,
+      autoBreakpoint: result.autoBreakpoint,
       reason: result.reason,
       userId: result.userId,
     };
@@ -397,6 +400,7 @@ function patchClaudeCacheRequestBuffer(buffer, requestInfo) {
     totalPromptTokens: result.totalPromptTokens,
     minimumCacheTokens: result.minimumCacheTokens,
     belowMinimum: result.belowMinimum,
+    autoBreakpoint: result.autoBreakpoint,
     userId: result.userId,
   };
 }
@@ -438,7 +442,14 @@ function patchClaudeCacheRequestBody(body, options = {}) {
     changed = true;
   }
 
-  const estimatedPromptTokens = estimateCacheControlledPrefixTokens(body);
+  let estimatedPromptTokens = estimateCacheControlledPrefixTokens(body);
+  const autoBreakpoint = estimatedPromptTokens < minimumCacheTokens
+    ? ensureAutomaticCacheControlAtMinimum(body, minimumCacheTokens, cacheControl)
+    : null;
+  if (autoBreakpoint?.changed) {
+    changed = true;
+    estimatedPromptTokens = estimateCacheControlledPrefixTokens(body);
+  }
   const belowMinimum = estimatedPromptTokens < minimumCacheTokens;
 
   return {
@@ -450,6 +461,7 @@ function patchClaudeCacheRequestBody(body, options = {}) {
     totalPromptTokens,
     minimumCacheTokens,
     belowMinimum,
+    autoBreakpoint,
     cacheReady: !changed && isCacheReady(body),
     reason: changed ? null : 'already_cache_ready',
   };
@@ -492,26 +504,12 @@ function estimateTokens(textOrChars) {
 }
 
 function estimatePromptTokens(body) {
-  const segments = [];
-  appendPromptSegments(segments, body?.tools);
-  appendPromptSegments(segments, body?.system);
-  if (Array.isArray(body?.messages)) {
-    for (const message of body.messages) {
-      appendPromptSegments(segments, message?.content, Boolean(message?.cache_control || message?.content?.cache_control));
-    }
-  }
+  const segments = collectPromptSegments(body);
   return estimateTokens(segments.map((segment) => segment.text).join('\n\n'));
 }
 
 function estimateCacheControlledPrefixTokens(body) {
-  const segments = [];
-  appendPromptSegments(segments, body?.tools);
-  appendPromptSegments(segments, body?.system);
-  if (Array.isArray(body?.messages)) {
-    for (const message of body.messages) {
-      appendPromptSegments(segments, message?.content, Boolean(message?.cache_control || message?.content?.cache_control));
-    }
-  }
+  const segments = collectPromptSegments(body);
 
   let prefix = '';
   let maxTokens = 0;
@@ -524,35 +522,134 @@ function estimateCacheControlledPrefixTokens(body) {
   return maxTokens;
 }
 
-function appendPromptSegments(segments, value, inheritedCacheControl = false) {
+function ensureAutomaticCacheControlAtMinimum(body, minimumTokens, cacheControl) {
+  const segments = collectPromptSegments(body, cacheControl);
+  let prefix = '';
+  let fallback = null;
+
+  for (const segment of segments) {
+    prefix = prefix ? `${prefix}\n\n${segment.text}` : segment.text;
+    const tokens = estimateTokens(prefix);
+    if (segment.canSetCacheControl && !segment.isCurrentOrAfterInput && tokens >= minimumTokens) {
+      if (segment.hasCacheControl) {
+        return { changed: false, reason: 'already_at_minimum', tokens };
+      }
+      segment.setCacheControl();
+      return { changed: true, reason: 'auto_minimum_breakpoint', tokens };
+    }
+    if (segment.canSetCacheControl && !segment.isCurrentOrAfterInput) {
+      fallback = { tokens };
+    }
+  }
+
+  return {
+    changed: false,
+    reason: fallback ? 'no_stable_breakpoint_reaches_minimum' : 'no_stable_breakpoint_available',
+    tokens: fallback?.tokens || 0,
+  };
+}
+
+function collectPromptSegments(body, cacheControl = null) {
+  const segments = [];
+  appendPromptSegments(segments, body?.tools, false, false, cacheControl);
+  appendPromptSegments(segments, body?.system, false, false, cacheControl);
+  if (Array.isArray(body?.messages)) {
+    const currentInputIndex = findCurrentInputIndex(body.messages);
+    body.messages.forEach((message, index) => {
+      const inherited = Boolean(message?.cache_control || message?.content?.cache_control);
+      const isCurrentOrAfterInput = currentInputIndex >= 0 && index >= currentInputIndex;
+      if (typeof message?.content === 'string') {
+        segments.push({
+          text: message.content,
+          hasCacheControl: inherited,
+          canSetCacheControl: Boolean(cacheControl),
+          isCurrentOrAfterInput,
+          setCacheControl: () => {
+            message.content = [{ type: 'text', text: message.content, cache_control: { ...cacheControl } }];
+          },
+        });
+        return;
+      }
+      appendPromptSegments(segments, message?.content, inherited, isCurrentOrAfterInput, cacheControl);
+    });
+  }
+  return segments;
+}
+
+function findCurrentInputIndex(messages) {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role === 'user') {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function appendPromptSegments(segments, value, inheritedCacheControl = false, isCurrentOrAfterInput = false, cacheControl = null) {
   if (value == null) {
     return;
   }
   if (typeof value === 'string') {
-    segments.push({ text: value, hasCacheControl: inheritedCacheControl });
+    segments.push({
+      text: value,
+      hasCacheControl: inheritedCacheControl,
+      canSetCacheControl: false,
+      isCurrentOrAfterInput,
+      setCacheControl: () => {},
+    });
     return;
   }
   if (Array.isArray(value)) {
     for (const item of value) {
-      appendPromptSegments(segments, item, inheritedCacheControl);
+      appendPromptSegments(segments, item, inheritedCacheControl, isCurrentOrAfterInput, cacheControl);
     }
     return;
   }
   if (typeof value === 'object') {
     const hasCacheControl = inheritedCacheControl || Boolean(value.cache_control);
     if (typeof value.text === 'string') {
-      segments.push({ text: value.text, hasCacheControl });
+      segments.push({
+        text: value.text,
+        hasCacheControl,
+        canSetCacheControl: Boolean(cacheControl) && isCacheableContentPart(value),
+        isCurrentOrAfterInput,
+        setCacheControl: () => {
+          if (!value.cache_control) {
+            value.cache_control = { ...cacheControl };
+          }
+        },
+      });
       return;
     }
     if (typeof value.content === 'string') {
-      segments.push({ text: value.content, hasCacheControl });
+      segments.push({
+        text: value.content,
+        hasCacheControl,
+        canSetCacheControl: Boolean(cacheControl) && isCacheableContentPart(value),
+        isCurrentOrAfterInput,
+        setCacheControl: () => {
+          if (!value.cache_control) {
+            value.cache_control = { ...cacheControl };
+          }
+        },
+      });
       return;
     }
     if (Array.isArray(value.content)) {
-      appendPromptSegments(segments, value.content, hasCacheControl);
+      appendPromptSegments(segments, value.content, hasCacheControl, isCurrentOrAfterInput, cacheControl);
       return;
     }
-    segments.push({ text: JSON.stringify(value), hasCacheControl });
+    segments.push({
+      text: JSON.stringify(value),
+      hasCacheControl,
+      canSetCacheControl: Boolean(cacheControl) && isCacheableContentPart(value),
+      isCurrentOrAfterInput,
+      setCacheControl: () => {
+        if (!value.cache_control) {
+          value.cache_control = { ...cacheControl };
+        }
+      },
+    });
   }
 }
 

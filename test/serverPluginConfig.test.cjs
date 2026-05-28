@@ -119,9 +119,9 @@ test('estimates cache-controlled prefix separately from total prompt', () => {
     model: 'claude-opus-4-7',
     system: 'tiny system',
     messages: [
-      { role: 'user', content: 'older stable user text '.repeat(900) },
-      { role: 'assistant', content: 'older stable assistant text '.repeat(900) },
-      { role: 'user', content: 'current input' },
+      { role: 'user', content: 'older stable user text' },
+      { role: 'assistant', content: 'older stable assistant text' },
+      { role: 'user', content: 'current input '.repeat(1800) },
     ],
   };
 
@@ -134,6 +134,51 @@ test('estimates cache-controlled prefix separately from total prompt', () => {
   assert.equal(result.totalPromptTokens > result.estimatedPromptTokens, true);
   assert.equal(result.estimatedPromptTokens < result.minimumCacheTokens, true);
   assert.equal(result.belowMinimum, true);
+  assert.equal(result.autoBreakpoint.reason, 'no_stable_breakpoint_reaches_minimum');
+});
+
+test('automatically adds a stable cache breakpoint when it reaches the minimum', () => {
+  const body = {
+    model: 'claude-opus-4-7',
+    system: 'tiny system',
+    messages: [
+      { role: 'user', content: 'older stable user text '.repeat(900) },
+      { role: 'assistant', content: 'older stable assistant text '.repeat(900) },
+      { role: 'user', content: 'current input' },
+    ],
+  };
+
+  const result = _private.patchClaudeCacheRequestBody(body, {
+    userId: 'money',
+    settings: { cachingAtDepth: -1, extendedTTL: false },
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.belowMinimum, false);
+  assert.equal(result.autoBreakpoint.reason, 'auto_minimum_breakpoint');
+  assert.equal(body.messages[0].content[0].cache_control.type, 'ephemeral');
+});
+
+test('does not use the current user input as an automatic breakpoint before assistant prefill', () => {
+  const body = {
+    model: 'claude-opus-4-7',
+    system: 'tiny system',
+    messages: [
+      { role: 'user', content: 'old' },
+      { role: 'assistant', content: 'old reply' },
+      { role: 'user', content: 'current input '.repeat(1800) },
+      { role: 'assistant', content: '' },
+    ],
+  };
+
+  const result = _private.patchClaudeCacheRequestBody(body, {
+    userId: 'money',
+    settings: { cachingAtDepth: -1, extendedTTL: false },
+  });
+
+  assert.equal(result.belowMinimum, true);
+  assert.equal(result.autoBreakpoint.reason, 'no_stable_breakpoint_reaches_minimum');
+  assert.equal(typeof body.messages[2].content, 'string');
 });
 
 test('treats already cache-ready Claude bodies as ready, not skipped', () => {
@@ -195,9 +240,9 @@ test('does not patch non-Claude chat completion bodies', () => {
 });
 
 test('compares semantic versions for server plugin self update', () => {
-  assert.equal(_private.compareVersions('0.1.15', '0.1.14'), 1);
-  assert.equal(_private.compareVersions('0.1.15', '0.1.15'), 0);
-  assert.equal(_private.compareVersions('0.1.9', '0.1.15'), -1);
+  assert.equal(_private.compareVersions('0.1.16', '0.1.15'), 1);
+  assert.equal(_private.compareVersions('0.1.16', '0.1.16'), 0);
+  assert.equal(_private.compareVersions('0.1.9', '0.1.16'), -1);
 });
 
 test('copies only server plugin entry files during self update', () => {
