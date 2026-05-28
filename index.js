@@ -496,7 +496,11 @@ function renderServerStatus() {
   if (status.state === 'active') {
     const payload = status.payload || {};
     const version = payload.version ? ` v${payload.version}` : '';
-    node.textContent = `Server plugin${version} 已加载；已补丁请求 ${payload.patchedRequests || 0} 次；user_id=${payload.userId || '-'}`;
+    const skipped = payload.skippedRequests || 0;
+    const skipHint = skipped
+      ? `；最近跳过=${payload.lastSkippedReason || 'unknown'}${payload.lastSkippedModel ? ` (${payload.lastSkippedModel})` : ''}`
+      : '';
+    node.textContent = `Server plugin${version} 已加载；已补丁 ${payload.patchedRequests || 0} 次；已自带缓存 ${payload.cacheReadyRequests || 0} 次；跳过 ${skipped} 次${skipHint}；user_id=${payload.userId || '-'}`;
     return;
   }
 

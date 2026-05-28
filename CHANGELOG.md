@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.11
+
+- Report the last skipped request reason, target kind, and model name in the patcher status.
+- Treat Claude-family aliases such as Opus, Sonnet, and Haiku as cache-patchable even when the model name omits `claude`.
+- Count already cache-ready requests separately from skipped requests.
+
 ## 0.1.10
 
 - Show server plugin request-patcher status in the extension panel.

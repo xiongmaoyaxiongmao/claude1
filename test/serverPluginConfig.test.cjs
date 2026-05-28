@@ -85,6 +85,49 @@ test('patches OpenAI-compatible Claude message content at selected depth', () =>
   assert.equal(body.messages[1].content[0].cache_control.type, 'ephemeral');
 });
 
+test('patches Claude-family aliases without the claude prefix', () => {
+  const body = {
+    model: 'opus-4-7',
+    messages: [
+      { role: 'system', content: 'stable system' },
+      { role: 'user', content: 'hello' },
+    ],
+  };
+
+  const result = _private.patchClaudeCacheRequestBody(body, {
+    userId: 'money',
+    settings: { cachingAtDepth: -1, extendedTTL: false },
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.model, 'opus-4-7');
+  assert.equal(body.metadata.user_id, 'money');
+  assert.equal(body.messages[0].content[0].cache_control.type, 'ephemeral');
+});
+
+test('treats already cache-ready Claude bodies as ready, not skipped', () => {
+  const body = {
+    model: 'claude-opus-4-7',
+    metadata: { user_id: 'money' },
+    cache_control: { type: 'ephemeral', ttl: '5m' },
+    messages: [
+      {
+        role: 'system',
+        content: [{ type: 'text', text: 'stable system', cache_control: { type: 'ephemeral', ttl: '5m' } }],
+      },
+    ],
+  };
+
+  const result = _private.patchClaudeCacheRequestBody(body, {
+    userId: 'money',
+    settings: { cachingAtDepth: -1, extendedTTL: false },
+  });
+
+  assert.equal(result.changed, false);
+  assert.equal(result.cacheReady, true);
+  assert.equal(result.reason, 'already_cache_ready');
+});
+
 test('does not patch non-Claude chat completion bodies', () => {
   const body = {
     model: 'gpt-4.1',
@@ -96,5 +139,6 @@ test('does not patch non-Claude chat completion bodies', () => {
   });
 
   assert.equal(result.changed, false);
+  assert.equal(result.reason, 'non_claude_model');
   assert.equal(body.metadata, undefined);
 });

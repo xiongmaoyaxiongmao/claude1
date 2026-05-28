@@ -6,15 +6,24 @@ const https = require('node:https');
 const path = require('node:path');
 
 const MAX_ITEMS = 100;
-const PLUGIN_VERSION = '0.1.10';
+const PLUGIN_VERSION = '0.1.11';
 const snapshots = [];
 const patcherState = {
   installed: false,
   patchedRequests: 0,
+  cacheReadyRequests: 0,
   skippedRequests: 0,
+  lastSeenAt: null,
+  lastSeenTarget: null,
+  lastSeenModel: null,
   lastPatchedAt: null,
   lastTarget: null,
   lastUserId: null,
+  lastCacheReadyAt: null,
+  lastSkippedAt: null,
+  lastSkippedTarget: null,
+  lastSkippedModel: null,
+  lastSkippedReason: null,
 };
 const originalRequest = {
   http: http.request,
@@ -279,14 +288,26 @@ function makePatchedRequest(protocol, original) {
 
       const originalBody = Buffer.concat(chunks);
       const patchResult = patchClaudeCacheRequestBuffer(originalBody, requestInfo);
+      const now = new Date().toISOString();
+      patcherState.lastSeenAt = now;
+      patcherState.lastSeenTarget = sanitizeTarget(requestInfo.href);
+      patcherState.lastSeenModel = patchResult.model || null;
       if (patchResult.changed) {
         req.setHeader('content-length', Buffer.byteLength(patchResult.body));
         patcherState.patchedRequests += 1;
-        patcherState.lastPatchedAt = new Date().toISOString();
-        patcherState.lastTarget = requestInfo.href;
+        patcherState.lastPatchedAt = now;
+        patcherState.lastTarget = sanitizeTarget(requestInfo.href);
         patcherState.lastUserId = patchResult.userId;
+      } else if (patchResult.cacheReady) {
+        patcherState.cacheReadyRequests += 1;
+        patcherState.lastCacheReadyAt = now;
+        patcherState.lastUserId = patchResult.userId || patcherState.lastUserId;
       } else {
         patcherState.skippedRequests += 1;
+        patcherState.lastSkippedAt = now;
+        patcherState.lastSkippedTarget = sanitizeTarget(requestInfo.href);
+        patcherState.lastSkippedModel = patchResult.model || null;
+        patcherState.lastSkippedReason = patchResult.reason || 'unknown';
       }
 
       return originalEnd(patchResult.changed ? patchResult.body : originalBody, encoding, callback);
@@ -298,41 +319,50 @@ function makePatchedRequest(protocol, original) {
 
 function patchClaudeCacheRequestBuffer(buffer, requestInfo) {
   if (!buffer?.length) {
-    return { changed: false, body: buffer };
+    return { changed: false, body: buffer, reason: 'empty_body' };
   }
   const text = buffer.toString('utf8');
   let body;
   try {
     body = JSON.parse(text);
   } catch {
-    return { changed: false, body: buffer };
+    return { changed: false, body: buffer, reason: 'non_json_body' };
   }
 
   const result = patchClaudeCacheRequestBody(body, {
     forceClaude: requestInfo.pathname.endsWith('/messages'),
+    assumeClaudeWhenModelMissing: requestInfo.pathname.endsWith('/chat/completions'),
     userId: getMetadataUserId(),
     settings: readClaudeConfigFromDisk(),
   });
 
   if (!result.changed) {
-    return { changed: false, body: buffer };
+    return {
+      changed: false,
+      body: buffer,
+      cacheReady: result.cacheReady,
+      model: result.model,
+      reason: result.reason,
+      userId: result.userId,
+    };
   }
 
   return {
     changed: true,
     body: JSON.stringify(body),
+    model: result.model,
     userId: result.userId,
   };
 }
 
 function patchClaudeCacheRequestBody(body, options = {}) {
   if (!body || typeof body !== 'object') {
-    return { changed: false };
+    return { changed: false, reason: 'invalid_body' };
   }
-  const model = String(body.model || '').toLowerCase();
-  const isClaude = options.forceClaude || model.includes('claude');
+  const model = normalizeModelName(body.model);
+  const isClaude = options.forceClaude || isClaudeLikeModel(model) || (!model && options.assumeClaudeWhenModelMissing);
   if (!isClaude) {
-    return { changed: false };
+    return { changed: false, model, reason: model ? 'non_claude_model' : 'missing_model' };
   }
 
   const settings = options.settings || {};
@@ -364,7 +394,41 @@ function patchClaudeCacheRequestBody(body, options = {}) {
     changed = true;
   }
 
-  return { changed, userId };
+  return {
+    changed,
+    userId,
+    model,
+    cacheReady: !changed && isCacheReady(body),
+    reason: changed ? null : 'already_cache_ready',
+  };
+}
+
+function normalizeModelName(value) {
+  if (value == null) {
+    return '';
+  }
+  return String(value).trim().toLowerCase();
+}
+
+function isClaudeLikeModel(model) {
+  return /(?:claude|anthropic|opus|sonnet|haiku)/i.test(String(model || ''));
+}
+
+function isCacheReady(body) {
+  return Boolean(body?.metadata?.user_id && hasAnyCacheControl(body));
+}
+
+function hasAnyCacheControl(value) {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  if (value.cache_control) {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => hasAnyCacheControl(item));
+  }
+  return Object.values(value).some((item) => hasAnyCacheControl(item));
 }
 
 function ensureSystemCacheControl(body, cacheControl) {
@@ -520,11 +584,23 @@ function getRequestOptions(input, options) {
   return input || {};
 }
 
+function sanitizeTarget(href) {
+  try {
+    const url = new URL(href);
+    url.search = '';
+    url.hash = '';
+    return url.href;
+  } catch {
+    return String(href || '').split('?')[0];
+  }
+}
+
 module.exports = {
   init,
   exit,
   _private: {
     buildClaudeBlock,
+    isClaudeLikeModel,
     normalizeClaudeSettings,
     patchClaudeCacheRequestBody,
     readClaudeConfig,
