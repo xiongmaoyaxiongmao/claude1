@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.6
+
+- Add a server-plugin `index.js` wrapper so SillyTavern can load the plugin by default directory entrypoint as well as through `package.json`.
+
 ## 0.1.5
 
 - Add `server-plugin/package.json` so SillyTavern directory plugin loading can discover the CommonJS `index.cjs` entrypoint.

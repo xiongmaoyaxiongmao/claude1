@@ -49,7 +49,7 @@ cp -R data/default-user/extensions/claude1/server-plugin/* plugins/claude-cache-
 enableServerPlugins: true
 ```
 
-Restart SillyTavern. The plugin folder must contain `package.json` and `index.cjs`; the package file tells SillyTavern to load `index.cjs`. The plugin exposes:
+Restart SillyTavern. The plugin folder must contain `index.js`, `index.cjs`, and `package.json`. The plugin exposes:
 
 - `GET /api/plugins/claude-cache-lens/diagnose`
 - `POST /api/plugins/claude-cache-lens/diagnose`
