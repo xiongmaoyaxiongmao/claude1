@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.19
+
+- Guard now blocks Claude requests when the cache prefix changed from the previous Claude request.
+- Guard now blocks when the previous cache baseline is older than the selected TTL, avoiding false expectations of a cache read.
+
 ## 0.1.18
 
 - Track the last Claude cache-prefix hash and whether it matches the previous Claude request for the same target/model/user.

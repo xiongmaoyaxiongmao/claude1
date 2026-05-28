@@ -6,8 +6,10 @@ const https = require('node:https');
 const path = require('node:path');
 
 const MAX_ITEMS = 100;
-const PLUGIN_VERSION = '0.1.18';
+const PLUGIN_VERSION = '0.1.19';
 const SERVER_PLUGIN_PACKAGE_NAME = 'claude-cache-lens-server-plugin';
+const STATE_DIR = path.resolve(__dirname, '.claude-cache-lens');
+const PREFIX_HISTORY_PATH = path.join(STATE_DIR, 'prefix-history.json');
 const CACHE_MINIMUM_TOKENS = Object.freeze({
   opus45Plus: 4096,
   opus: 1024,
@@ -155,6 +157,7 @@ async function init(router) {
     }
   });
 
+  loadPrefixHistory();
   installRequestPatcher();
   console.log('[Claude Cache Lens] server plugin loaded');
   return Promise.resolve();
@@ -358,12 +361,12 @@ function makePatchedRequest(protocol, original) {
       patcherState.lastMinimumCacheTokens = patchResult.minimumCacheTokens ?? null;
       patcherState.lastBelowMinimum = patchResult.belowMinimum ?? null;
       patcherState.lastAutoBreakpoint = patchResult.autoBreakpoint || null;
+      Object.assign(patchResult, getClaudePrefixComparison(patchResult, requestInfo, now));
+      patchResult.guardReason = getGuardBlockReason(patchResult);
       if (shouldGuardBlock(patchResult)) {
         recordClaudeAttempt(patchResult, requestInfo, now, 'blocked');
         recordGuardBlock(patchResult, requestInfo, now);
-        const error = new Error(
-          `Claude Cache Lens blocked request: cache prefix ${patchResult.estimatedPromptTokens || 0}/${patchResult.minimumCacheTokens} tokens.`
-        );
+        const error = new Error(buildGuardErrorMessage(patchResult));
         error.code = 'CLAUDE_CACHE_LENS_GUARD';
         process.nextTick(() => req.destroy(error));
         return req;
@@ -400,8 +403,35 @@ function shouldGuardBlock(patchResult) {
   return Boolean(
     guardState.enabled
     && patchResult?.minimumCacheTokens
-    && patchResult.belowMinimum === true
+    && getGuardBlockReason(patchResult)
   );
+}
+
+function getGuardBlockReason(patchResult) {
+  if (!patchResult?.minimumCacheTokens) {
+    return null;
+  }
+  if (patchResult.belowMinimum === true) {
+    return patchResult.autoBreakpoint?.reason || 'below_minimum';
+  }
+  if (patchResult.prefixExpired === true) {
+    return 'prefix_expired';
+  }
+  if (patchResult.prefixMismatch === true) {
+    return 'prefix_mismatch';
+  }
+  return null;
+}
+
+function buildGuardErrorMessage(patchResult) {
+  const reason = patchResult.guardReason || getGuardBlockReason(patchResult) || 'guard_blocked';
+  if (reason === 'prefix_mismatch') {
+    return 'Claude Cache Lens blocked request: cache prefix changed from the previous Claude request.';
+  }
+  if (reason === 'prefix_expired') {
+    return 'Claude Cache Lens blocked request: previous cache prefix is older than the selected TTL.';
+  }
+  return `Claude Cache Lens blocked request: cache prefix ${patchResult.estimatedPromptTokens || 0}/${patchResult.minimumCacheTokens} tokens.`;
 }
 
 function recordGuardBlock(patchResult, requestInfo, now) {
@@ -411,24 +441,58 @@ function recordGuardBlock(patchResult, requestInfo, now) {
   guardState.lastBlockedModel = patchResult.model || null;
   guardState.lastBlockedPrefixTokens = patchResult.estimatedPromptTokens ?? null;
   guardState.lastBlockedMinimumTokens = patchResult.minimumCacheTokens ?? null;
-  guardState.lastBlockedReason = patchResult.autoBreakpoint?.reason || 'below_minimum';
+  guardState.lastBlockedReason = patchResult.guardReason || getGuardBlockReason(patchResult) || 'guard_blocked';
 }
 
-function recordClaudeAttempt(patchResult, requestInfo, now, outcome) {
+function getClaudePrefixComparison(patchResult, requestInfo, now = new Date().toISOString()) {
   const target = sanitizeTarget(requestInfo.href);
-  const key = [
+  const key = hashString([
     target,
     patchResult.model || '',
     patchResult.userId || '',
-  ].join('|');
+  ].join('|'));
   const previous = claudePrefixHistory.get(key) || null;
   const prefixHash = patchResult.cachePrefixHash || null;
+  const ttlMs = patchResult.cacheTtl === '1h' ? 60 * 60 * 1000 : 5 * 60 * 1000;
+  const previousAgeMs = previous?.at ? Date.parse(now) - Date.parse(previous.at) : null;
+  const prefixExpired = Boolean(
+    previous
+    && Number.isFinite(previousAgeMs)
+    && previousAgeMs > ttlMs
+  );
   const matchedPreviousPrefix = Boolean(
     previous
     && prefixHash
     && previous.cachePrefixHash === prefixHash
     && patchResult.estimatedPromptTokens >= patchResult.minimumCacheTokens
+    && !prefixExpired
   );
+  const prefixMismatch = Boolean(
+    previous
+    && prefixHash
+    && previous.cachePrefixHash !== prefixHash
+    && patchResult.estimatedPromptTokens >= patchResult.minimumCacheTokens
+    && !prefixExpired
+  );
+
+  return {
+    target,
+    prefixKey: key,
+    previousAt: previous?.at || null,
+    previousPrefixTokens: previous?.cachePrefixTokens ?? null,
+    previousAgeMs,
+    matchedPreviousPrefix,
+    prefixMismatch,
+    prefixExpired,
+  };
+}
+
+function recordClaudeAttempt(patchResult, requestInfo, now, outcome) {
+  const comparison = patchResult.prefixKey
+    ? patchResult
+    : getClaudePrefixComparison(patchResult, requestInfo, now);
+  const target = comparison.target || sanitizeTarget(requestInfo.href);
+  const prefixHash = patchResult.cachePrefixHash || null;
 
   patcherState.lastClaude = {
     at: now,
@@ -441,18 +505,57 @@ function recordClaudeAttempt(patchResult, requestInfo, now, outcome) {
     minimumCacheTokens: patchResult.minimumCacheTokens ?? null,
     belowMinimum: patchResult.belowMinimum ?? null,
     cachePrefixHash: prefixHash,
-    matchedPreviousPrefix,
-    previousAt: previous?.at || null,
-    previousPrefixTokens: previous?.cachePrefixTokens ?? null,
+    matchedPreviousPrefix: comparison.matchedPreviousPrefix,
+    previousAt: comparison.previousAt || null,
+    previousPrefixTokens: comparison.previousPrefixTokens ?? null,
+    previousAgeMs: comparison.previousAgeMs ?? null,
+    prefixMismatch: comparison.prefixMismatch,
+    prefixExpired: comparison.prefixExpired,
+    guardReason: patchResult.guardReason || null,
     autoBreakpoint: patchResult.autoBreakpoint || null,
   };
 
-  if (prefixHash) {
-    claudePrefixHistory.set(key, {
+  if (prefixHash && outcome === 'sent') {
+    claudePrefixHistory.set(comparison.prefixKey, {
       at: now,
       cachePrefixHash: prefixHash,
       cachePrefixTokens: patchResult.estimatedPromptTokens ?? null,
     });
+    savePrefixHistory();
+  }
+}
+
+function loadPrefixHistory() {
+  claudePrefixHistory.clear();
+  if (!fs.existsSync(PREFIX_HISTORY_PATH)) {
+    return;
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(PREFIX_HISTORY_PATH, 'utf8'));
+    const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+    for (const [key, value] of entries) {
+      if (typeof key === 'string' && value?.cachePrefixHash) {
+        claudePrefixHistory.set(key, {
+          at: value.at || null,
+          cachePrefixHash: String(value.cachePrefixHash),
+          cachePrefixTokens: value.cachePrefixTokens ?? null,
+        });
+      }
+    }
+  } catch {
+    claudePrefixHistory.clear();
+  }
+}
+
+function savePrefixHistory() {
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    const entries = Array.from(claudePrefixHistory.entries())
+      .sort((left, right) => String(right[1]?.at || '').localeCompare(String(left[1]?.at || '')))
+      .slice(0, 50);
+    fs.writeFileSync(PREFIX_HISTORY_PATH, `${JSON.stringify({ version: 1, entries }, null, 2)}\n`, 'utf8');
+  } catch {
+    // Best effort only; request patching must not fail because diagnostics could not be persisted.
   }
 }
 
@@ -487,6 +590,7 @@ function patchClaudeCacheRequestBuffer(buffer, requestInfo) {
       minimumCacheTokens: result.minimumCacheTokens,
       belowMinimum: result.belowMinimum,
       cachePrefixHash: result.cachePrefixHash,
+      cacheTtl: result.cacheTtl,
       autoBreakpoint: result.autoBreakpoint,
       reason: result.reason,
       userId: result.userId,
@@ -503,6 +607,7 @@ function patchClaudeCacheRequestBuffer(buffer, requestInfo) {
     minimumCacheTokens: result.minimumCacheTokens,
     belowMinimum: result.belowMinimum,
     cachePrefixHash: result.cachePrefixHash,
+    cacheTtl: result.cacheTtl,
     autoBreakpoint: result.autoBreakpoint,
     userId: result.userId,
   };
@@ -567,6 +672,7 @@ function patchClaudeCacheRequestBody(body, options = {}) {
     minimumCacheTokens,
     belowMinimum,
     cachePrefixHash: cachePrefixInfo.hash,
+    cacheTtl: ttl,
     autoBreakpoint,
     cacheReady: !changed && isCacheReady(body),
     reason: changed ? null : 'already_cache_ready',

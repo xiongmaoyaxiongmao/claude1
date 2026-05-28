@@ -287,10 +287,23 @@ test('guard blocks only Claude requests below the cache minimum', () => {
   }), false);
 });
 
+test('guard blocks changed or expired Claude cache prefixes', () => {
+  assert.equal(_private.shouldGuardBlock({
+    minimumCacheTokens: 4096,
+    belowMinimum: false,
+    prefixMismatch: true,
+  }), true);
+  assert.equal(_private.shouldGuardBlock({
+    minimumCacheTokens: 4096,
+    belowMinimum: false,
+    prefixExpired: true,
+  }), true);
+});
+
 test('compares semantic versions for server plugin self update', () => {
-  assert.equal(_private.compareVersions('0.1.18', '0.1.17'), 1);
-  assert.equal(_private.compareVersions('0.1.18', '0.1.18'), 0);
-  assert.equal(_private.compareVersions('0.1.9', '0.1.18'), -1);
+  assert.equal(_private.compareVersions('0.1.19', '0.1.18'), 1);
+  assert.equal(_private.compareVersions('0.1.19', '0.1.19'), 0);
+  assert.equal(_private.compareVersions('0.1.9', '0.1.19'), -1);
 });
 
 test('copies only server plugin entry files during self update', () => {
