@@ -8,7 +8,7 @@
   "css": "style.css",
   "author": "Codex",
   "version": "0.1.1",
-  "homePage": "https://github.com/xiongmaoyaxiongmao/-.git",
+  "homePage": "https://github.com/xiongmaoyaxiongmao/claude1.git",
   "auto_update": true,
   "minimum_client_version": "1.10.0",
   "generate_interceptor": "claudeCacheLensInterceptor",

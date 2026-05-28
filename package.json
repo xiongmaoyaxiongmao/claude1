@@ -6,7 +6,7 @@
   "private": true,
   "repository": {
     "type": "git",
-    "url": "https://github.com/xiongmaoyaxiongmao/-.git"
+    "url": "https://github.com/xiongmaoyaxiongmao/claude1.git"
   },
   "scripts": {
     "test": "node --test",

@@ -19,7 +19,7 @@ Claude Cache Lens is a SillyTavern third-party extension for prompt-cache diagno
 3. Paste the repository URL, for example:
 
 ```text
-https://github.com/xiongmaoyaxiongmao/-.git
+https://github.com/xiongmaoyaxiongmao/claude1.git
 ```
 
 4. Install it for your user or all users.
@@ -93,7 +93,7 @@ git init
 git add .
 git commit -m "Initial Claude Cache Lens extension"
 git branch -M main
-git remote add origin https://github.com/xiongmaoyaxiongmao/-.git
+git remote add origin https://github.com/xiongmaoyaxiongmao/claude1.git
 git push -u origin main
 ```
 
