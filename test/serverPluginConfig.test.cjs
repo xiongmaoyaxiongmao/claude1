@@ -161,6 +161,31 @@ test('automatically adds a stable cache breakpoint when it reaches the minimum',
   assert.equal(result.cachePrefixHash, _private.getCacheControlledPrefixInfo(body).hash);
 });
 
+test('respects disabled system prompt cache while still marking stable history', () => {
+  const body = {
+    model: 'claude-opus-4-7',
+    system: [{ type: 'text', text: 'dynamic system '.repeat(500) }],
+    messages: [
+      { role: 'user', content: 'older stable user text '.repeat(900) },
+      { role: 'assistant', content: 'older stable assistant text '.repeat(900) },
+      { role: 'user', content: 'current input' },
+    ],
+  };
+
+  const result = _private.patchClaudeCacheRequestBody(body, {
+    userId: 'money',
+    settings: { enableSystemPromptCache: false, cachingAtDepth: -1, extendedTTL: false },
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(body.system[0].cache_control, undefined);
+  assert.equal(body.messages[0].content[0].cache_control.type, 'ephemeral');
+  assert.equal(result.belowMinimum, false);
+  assert.equal(result.autoBreakpoint.reason, 'auto_minimum_breakpoint');
+  assert.equal(result.cachePrefixSegments[0].source, 'system[0]');
+  assert.equal(result.cachePrefixSegments[0].hasCacheControl, false);
+});
+
 test('cache prefix hash changes when the stable prefix changes', () => {
   const first = {
     model: 'claude-opus-4-7',
@@ -440,9 +465,9 @@ test('one-shot baseline write allowance bypasses prefix replacement blocks', () 
 });
 
 test('compares semantic versions for server plugin self update', () => {
-  assert.equal(_private.compareVersions('0.1.26', '0.1.25'), 1);
-  assert.equal(_private.compareVersions('0.1.26', '0.1.26'), 0);
-  assert.equal(_private.compareVersions('0.1.9', '0.1.26'), -1);
+  assert.equal(_private.compareVersions('0.1.27', '0.1.26'), 1);
+  assert.equal(_private.compareVersions('0.1.27', '0.1.27'), 0);
+  assert.equal(_private.compareVersions('0.1.9', '0.1.27'), -1);
 });
 
 test('copies only server plugin entry files during self update', () => {

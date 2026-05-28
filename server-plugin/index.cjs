@@ -6,7 +6,7 @@ const https = require('node:https');
 const path = require('node:path');
 
 const MAX_ITEMS = 100;
-const PLUGIN_VERSION = '0.1.26';
+const PLUGIN_VERSION = '0.1.27';
 const SERVER_PLUGIN_PACKAGE_NAME = 'claude-cache-lens-server-plugin';
 const STATE_DIR = path.resolve(__dirname, '.claude-cache-lens');
 const PREFIX_HISTORY_PATH = path.join(STATE_DIR, 'prefix-history.json');
@@ -1006,7 +1006,8 @@ function patchClaudeCacheRequestBody(body, options = {}) {
     changed = true;
   }
 
-  if (ensureSystemCacheControl(body, cacheControl)) {
+  const enableSystemPromptCache = settings.enableSystemPromptCache !== false;
+  if (enableSystemPromptCache && ensureSystemCacheControl(body, cacheControl)) {
     changed = true;
   }
 
@@ -1018,7 +1019,7 @@ function patchClaudeCacheRequestBody(body, options = {}) {
   let cachePrefixInfo = getCacheControlledPrefixInfo(body);
   let estimatedPromptTokens = cachePrefixInfo.tokens;
   const autoBreakpoint = estimatedPromptTokens < minimumCacheTokens
-    ? ensureAutomaticCacheControlAtMinimum(body, minimumCacheTokens, cacheControl)
+    ? ensureAutomaticCacheControlAtMinimum(body, minimumCacheTokens, cacheControl, { enableSystemPromptCache })
     : null;
   if (autoBreakpoint?.changed) {
     changed = true;
@@ -1158,8 +1159,8 @@ function hashString(value) {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-function ensureAutomaticCacheControlAtMinimum(body, minimumTokens, cacheControl) {
-  const segments = collectPromptSegments(body, cacheControl);
+function ensureAutomaticCacheControlAtMinimum(body, minimumTokens, cacheControl, options = {}) {
+  const segments = collectPromptSegments(body, cacheControl, options);
   let prefix = '';
   let fallback = null;
 
@@ -1185,10 +1186,11 @@ function ensureAutomaticCacheControlAtMinimum(body, minimumTokens, cacheControl)
   };
 }
 
-function collectPromptSegments(body, cacheControl = null) {
+function collectPromptSegments(body, cacheControl = null, options = {}) {
   const segments = [];
+  const systemCacheControl = options.enableSystemPromptCache === false ? null : cacheControl;
   appendPromptSegments(segments, body?.tools, false, false, cacheControl, 'tools', null);
-  appendPromptSegments(segments, body?.system, false, false, cacheControl, 'system', 'system');
+  appendPromptSegments(segments, body?.system, false, false, systemCacheControl, 'system', 'system');
   if (Array.isArray(body?.messages)) {
     const currentInputIndex = findCurrentInputIndex(body.messages);
     body.messages.forEach((message, index) => {

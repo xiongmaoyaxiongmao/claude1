@@ -12,6 +12,7 @@ const defaultSettings = Object.freeze({
   enabled: true,
   sendSnapshotsToServerPlugin: true,
   maxStoredSnapshots: 20,
+  systemPromptCacheOverride: null,
   cachingAtDepthOverride: null,
   extendedTTLOverride: null,
 });
@@ -191,6 +192,10 @@ function mountPanel() {
             <input id="ccl_extended_ttl" type="checkbox">
             <span>1h TTL</span>
           </label>
+          <label class="checkbox_label ccl-system-control">
+            <input id="ccl_system_prompt_cache" type="checkbox">
+            <span>System</span>
+          </label>
           <label class="checkbox_label ccl-guard-control">
             <input id="ccl_guard_minimum" type="checkbox" checked>
             <span>Guard</span>
@@ -259,6 +264,12 @@ function bindEvents(context) {
     saveSettings();
     renderPanel();
   });
+  panel.querySelector('#ccl_system_prompt_cache')?.addEventListener('change', (event) => {
+    const settings = getSettings();
+    settings.systemPromptCacheOverride = Boolean(event.target.checked);
+    saveSettings();
+    renderPanel();
+  });
   panel.querySelector('#ccl_guard_minimum')?.addEventListener('change', (event) => {
     setGuardEnabled(Boolean(event.target.checked)).catch(() => {});
   });
@@ -283,6 +294,7 @@ function hydrateControls() {
   const enabled = document.getElementById('ccl_enabled');
   const depthSelect = document.getElementById('ccl_depth_select');
   const extendedTTL = document.getElementById('ccl_extended_ttl');
+  const systemPromptCache = document.getElementById('ccl_system_prompt_cache');
   const guard = document.getElementById('ccl_guard_minimum');
   if (enabled) enabled.checked = Boolean(settings.enabled);
   if (depthSelect) {
@@ -291,6 +303,11 @@ function hydrateControls() {
   }
   if (extendedTTL) {
     extendedTTL.checked = Boolean(settings.extendedTTLOverride);
+  }
+  if (systemPromptCache) {
+    systemPromptCache.checked = settings.systemPromptCacheOverride == null
+      ? Boolean(latestState.analysis?.recommendations?.enableSystemPromptCache ?? true)
+      : Boolean(settings.systemPromptCacheOverride);
   }
   if (guard && latestState.serverStatus?.payload?.guard) {
     guard.checked = Boolean(latestState.serverStatus.payload.guard.enabled);
@@ -692,6 +709,9 @@ function syncSettingsFromServerConfig(current) {
   if (typeof current.extendedTTL === 'boolean') {
     settings.extendedTTLOverride = current.extendedTTL;
   }
+  if (typeof current.enableSystemPromptCache === 'boolean') {
+    settings.systemPromptCacheOverride = current.enableSystemPromptCache;
+  }
   saveSettings();
 }
 
@@ -714,8 +734,9 @@ function getRecommendedSettings(analysis) {
   };
   const depth = settings.cachingAtDepthOverride ?? recommendations.cachingAtDepth ?? 2;
   const extendedTTL = settings.extendedTTLOverride ?? recommendations.extendedTTL ?? false;
+  const systemPromptCache = settings.systemPromptCacheOverride ?? recommendations.enableSystemPromptCache ?? true;
   return {
-    enableSystemPromptCache: Boolean(recommendations.enableSystemPromptCache),
+    enableSystemPromptCache: Boolean(systemPromptCache),
     cachingAtDepth: depth,
     extendedTTL: Boolean(extendedTTL),
   };

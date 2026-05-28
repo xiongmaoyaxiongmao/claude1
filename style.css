@@ -78,7 +78,7 @@
 
 .ccl-config-controls {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: end;
 }
@@ -93,7 +93,8 @@
   width: 100%;
 }
 
-.ccl-ttl-control {
+.ccl-ttl-control,
+.ccl-system-control {
   min-height: 32px;
   align-items: center;
 }

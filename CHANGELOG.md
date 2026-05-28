@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.27
+
+- Respect `claude.enableSystemPromptCache: false` in the server patcher, so dynamic or encrypted system injections do not get a system-only cache marker.
+- Add a panel `System` cache toggle while keeping history cache breakpoints available.
+
 ## 0.1.26
 
 - Compare all Claude cache-control breakpoints, not only the deepest prefix.
